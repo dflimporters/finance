@@ -102,6 +102,24 @@ tr.d31 td{background:var(--y)}tr.d61 td{background:var(--o)}tr.d91 td{background
 .mbox h3{margin:0 0 4px;font:800 16px var(--hf)}
 .mbox textarea{width:100%;min-height:90px;border:1px solid #CBD3E1;border-radius:6px;padding:9px;font:14px var(--bf);margin:10px 0}
 .mrow{display:flex;gap:8px;justify-content:flex-end}
+.badges{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
+.bdg{display:inline-block;border-radius:10px;padding:0 8px;font:600 10.5px var(--hf);line-height:18px;background:#EEF1F7;color:var(--ink2)}
+.bdg.due{background:#FFE3B0;color:#7a4a00}.bdg.broken{background:var(--red-t);color:#8a1f1f}.bdg.prom{background:var(--blue-t);color:var(--navy2)}
+.logsec{padding:12px 14px;border-bottom:1px solid var(--line);background:#fff}
+.loghead{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
+.loghead b{font:700 11px var(--hf);text-transform:uppercase;letter-spacing:.08em;color:var(--ink2)}
+.btn.sm{height:30px;padding:0 12px;font-size:11px}
+.entry{border-left:3px solid var(--line);padding:2px 0 2px 10px;margin:8px 0;font-size:13px}
+.entry .eh{color:var(--ink2);font-size:12px}.entry .eh b{color:var(--ink)}
+.entry .pr{color:var(--navy2);font-weight:600}
+.oc{display:inline-block;border-radius:8px;padding:0 7px;font:600 10.5px var(--hf);background:#EEF1F7;margin:0 2px}
+.oc.promised,.oc.paid,.oc.partial_payment{background:var(--green-t);color:#13693a}.oc.disputed,.oc.escalate{background:var(--red-t);color:#8a1f1f}
+.fgrid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.fgrid label{display:grid;gap:3px;font:600 11.5px var(--hf);color:var(--ink2)}
+.fgrid .full{grid-column:1/-1}
+.fgrid input,.fgrid select{height:38px;border:1px solid #CBD3E1;border-radius:6px;padding:0 9px;font:14px var(--bf);width:100%;background:#fff}
+.mbox.wide{max-width:520px;max-height:92vh;overflow:auto}
+.ferr{color:#8a1f1f;font-size:12.5px;min-height:18px;margin-top:6px}
 @media (max-width:900px){.strip{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media (max-width:640px){
   .page{padding:14px 12px 70px}
@@ -126,12 +144,19 @@ tr.d31 td{background:var(--y)}tr.d61 td{background:var(--o)}tr.d91 td{background
     <input id="repSel" class="hidden" list="repList" placeholder="All reps — type or pick" autocomplete="off" aria-label="Sales rep">
     <datalist id="repList"></datalist>
     <input id="q" type="search" placeholder="Search customer name or ID" aria-label="Search customers">
+    <select id="viewSel" aria-label="Show customers">
+      <option value="all">All customers</option>
+      <option value="due">Follow-ups due</option>
+      <option value="broken">Promises overdue</option>
+      <option value="stale">Not contacted in 14+ days</option>
+    </select>
     <select id="sortSel" aria-label="Sort customers">
       <option value="old">Biggest overdue (61+ days)</option>
       <option value="total">Largest balance</option>
       <option value="name">Name A–Z</option>
     </select>
     <button class="btn" id="dlBtn" disabled>Download Excel</button>
+    <button class="btn ghost" id="pdfBtn" disabled>Download PDF</button>
   </div>
 
   <div class="strip" id="kpis"></div>
@@ -160,7 +185,29 @@ tr.d31 td{background:var(--y)}tr.d61 td{background:var(--o)}tr.d91 td{background
   </div>
 </div>
 
+<div class="modal hidden" id="logModal" role="dialog" aria-modal="true">
+  <div class="mbox wide">
+    <h3>Log contact</h3>
+    <div id="logCust" style="color:var(--ink2);font-size:13px;margin-bottom:10px"></div>
+    <div class="fgrid">
+      <label>Method
+        <select id="lgMethod"><option value="call">Call</option><option value="whatsapp">WhatsApp</option><option value="email">Email</option><option value="visit">Visit</option><option value="other">Other</option></select></label>
+      <label>Outcome *
+        <select id="lgOutcome"><option value="">Choose…</option><option value="no_answer">No answer</option><option value="left_message">Left message</option><option value="promised">Promised to pay</option><option value="partial_payment">Partial payment</option><option value="disputed">Disputed</option><option value="paid">Paid</option><option value="escalate">Escalate</option><option value="other">Other</option></select></label>
+      <label class="full">Spoke to <input id="lgSpoke" maxlength="80" placeholder="Name / role"></label>
+      <label class="full">Note <textarea id="lgNote" maxlength="2000" style="min-height:84px;border:1px solid #CBD3E1;border-radius:6px;padding:9px;font:14px var(--bf)" placeholder="What was said"></textarea></label>
+      <label>Promise to pay by <input id="lgPDate" type="date"></label>
+      <label>Promise amount (J$) <input id="lgPAmt" type="number" min="0" step="0.01" inputmode="decimal" placeholder="0.00"></label>
+      <label class="full">Next follow-up <input id="lgNext" type="date"></label>
+    </div>
+    <div class="ferr" id="lgErr"></div>
+    <div class="mrow"><button class="btn ghost" id="lgCancel">Cancel</button><button class="btn" id="lgSave">Save</button></div>
+  </div>
+</div>
+
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
@@ -181,6 +228,13 @@ let SNAP = null, PREV = null;
 let ROWS = [];                 // latest snapshot rows visible to this user
 let PREV_AGG = { total:{}, cust:{}, byRep:{}, buckets:{} };
 let NOTES = new Map();         // "type|ref" -> note
+let LOG = new Map();           // customer_id -> contact log entries, newest first
+const OUTCOMES = { no_answer:'No answer', left_message:'Left message', promised:'Promised to pay', partial_payment:'Partial payment', disputed:'Disputed', paid:'Paid', escalate:'Escalate', other:'Other' };
+const METHODS = { call:'Call', whatsapp:'WhatsApp', email:'Email', visit:'Visit', other:'Other' };
+const jmDate = d => new Intl.DateTimeFormat('en-CA', { timeZone:'America/Jamaica' }).format(d);
+const TODAY = jmDate(new Date());
+const dShort = s => s ? new Date(s + 'T00:00:00').toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : '';
+const daysSince = s => Math.round((Date.parse(TODAY + 'T00:00:00Z') - Date.parse(s + 'T00:00:00Z')) / 86400000);
 let REP_FILTER = '';           // '' = all, UNASSIGNED, or rep code
 let OPEN = new Set();          // expanded customer ids
 
@@ -234,6 +288,36 @@ async function load(){
     const notes = await pageAll(() => sb.from('ar_disputes').select('doc_type,ref_nbr,note').order('doc_type').order('ref_nbr'));
     NOTES = new Map(notes.map(n => [n.doc_type + '|' + n.ref_nbr, n.note]));
   } catch(_) { NOTES = new Map(); }
+
+  await loadLog();
+}
+
+async function loadLog(){
+  try {
+    const rows = await pageAll(() => sb.from('ar_contact_log')
+      .select('id,customer_id,contacted_at,method,spoke_to,outcome,note,promise_date,promise_amount,next_followup,created_by_name')
+      .order('id', { ascending:false }));
+    LOG = new Map();
+    for(const r of rows){ (LOG.get(r.customer_id) || LOG.set(r.customer_id, []).get(r.customer_id)).push(r); }
+  } catch(e){ console.error(e); LOG = new Map(); }
+}
+
+// What the AR team needs to see at a glance for a customer, from its log (newest first).
+function logStatus(customerId){
+  const entries = LOG.get(customerId) || [];
+  const last = entries[0] || null;
+  const lastDay = last ? jmDate(new Date(last.contacted_at)) : null;
+  const promiseIdx = entries.findIndex(e => e.promise_date);
+  const promise = promiseIdx >= 0 ? entries[promiseIdx] : null;
+  // A promise is "overdue" once its date has passed and nothing was logged after it that settles it.
+  const settled = promiseIdx > 0 && entries.slice(0, promiseIdx).some(e => e.outcome === 'paid' || e.outcome === 'partial_payment');
+  return {
+    entries, last, lastDay,
+    daysAgo: lastDay ? daysSince(lastDay) : null,
+    followupDue: !!(last && last.next_followup && last.next_followup <= TODAY),
+    promise, promiseOverdue: !!(promise && promise.promise_date < TODAY && !settled),
+    promiseOpen: !!(promise && promise.promise_date >= TODAY)
+  };
 }
 
 // ---------- aggregation ----------
@@ -319,10 +403,31 @@ function docRow(r){
     (has ? '<tr class="' + cls + '"><td colspan="6" style="text-align:left;white-space:normal;font-size:12.5px;color:var(--ink2)">🚩 ' + esc(NOTES.get(keyOf(r))) + '</td></tr>' : '');
 }
 
+function logSection(c, st){
+  const items = st.entries.map(e => {
+    const when_ = new Date(e.contacted_at).toLocaleString('en-GB', { timeZone:'America/Jamaica', day:'numeric', month:'short', year:'numeric', hour:'numeric', minute:'2-digit', hour12:true });
+    return '<div class="entry"><div class="eh"><b>' + esc(when_) + '</b> · ' + esc(METHODS[e.method] || e.method) +
+      ' <span class="oc ' + esc(e.outcome) + '">' + esc(OUTCOMES[e.outcome] || e.outcome) + '</span>' +
+      (e.created_by_name ? ' · by ' + esc(e.created_by_name) : '') + '</div>' +
+      (e.spoke_to ? '<div>Spoke to: ' + esc(e.spoke_to) + '</div>' : '') +
+      (e.note ? '<div style="white-space:pre-wrap">' + esc(e.note) + '</div>' : '') +
+      (e.promise_date ? '<div class="pr">Promise: ' + (e.promise_amount != null ? 'J$' + fmt(Number(e.promise_amount)) + ' ' : '') + 'by ' + esc(dShort(e.promise_date)) + '</div>' : '') +
+      (e.next_followup ? '<div class="eh">Follow up: ' + esc(dShort(e.next_followup)) + '</div>' : '') + '</div>';
+  }).join('');
+  return '<div class="logsec"><div class="loghead"><b>Contact log (' + st.entries.length + ')</b><button class="btn sm logbtn" data-cust="' + esc(c.id) + '">+ Log contact</button></div>' +
+    (items || '<div style="color:var(--ink3);font-size:13px">No contact logged yet.</div>') + '</div>';
+}
+
 function renderCustomers(){
   const q = $('q').value.trim().toLowerCase();
   let list = groupCustomers(visibleRows());
   if(q) list = list.filter(c => c.name.toLowerCase().includes(q) || c.id.toLowerCase().includes(q));
+  const view = $('viewSel').value;
+  if(view !== 'all') list = list.filter(c => {
+    const st = logStatus(c.id);
+    return view === 'due' ? st.followupDue : view === 'broken' ? st.promiseOverdue
+         : (c.total > 0 && (st.daysAgo == null || st.daysAgo >= 14));
+  });
   const s = $('sortSel').value;
   list.sort(s === 'name' ? (a,b) => a.name.localeCompare(b.name)
           : s === 'total' ? (a,b) => b.total - a.total
@@ -333,10 +438,17 @@ function renderCustomers(){
   $('custList').innerHTML = shown.map(c => {
     const prev = PREV_AGG.cust[c.key];
     const open = OPEN.has(c.key);
-    const docs = open ? '<div class="docs"><div class="scroll"><table><tr><th>Document</th><th class="hide-m">Date</th><th>Days</th><th class="hide-m">Terms</th><th>Balance (JMD)</th><th></th></tr>' +
+    const st = logStatus(c.id);
+    const docs = open ? '<div class="docs">' + logSection(c, st) + '<div class="scroll"><table><tr><th>Document</th><th class="hide-m">Date</th><th>Days</th><th class="hide-m">Terms</th><th>Balance (JMD)</th><th></th></tr>' +
       c.rows.slice().sort((a,b) => (a.is_credit - b.is_credit) || (b.days_aged||0) - (a.days_aged||0)).map(docRow).join('') + '</table></div></div>' : '';
+    const badges = [];
+    if(st.followupDue) badges.push('<span class="bdg due">Follow-up due ' + esc(dShort(st.last.next_followup)) + '</span>');
+    if(st.promiseOverdue) badges.push('<span class="bdg broken">Promise overdue: J$' + fmt0(Number(st.promise.promise_amount) || 0) + ' by ' + esc(dShort(st.promise.promise_date)) + '</span>');
+    else if(st.promiseOpen) badges.push('<span class="bdg prom">Promised J$' + fmt0(Number(st.promise.promise_amount) || 0) + ' by ' + esc(dShort(st.promise.promise_date)) + '</span>');
+    badges.push('<span class="bdg">' + (st.last ? 'Last contact ' + (st.daysAgo === 0 ? 'today' : st.daysAgo + 'd ago') : 'Never contacted') + '</span>');
+    const repTxt = c.rep ? (c.repName ? c.repName + ' (' + c.rep + ')' : c.rep) : 'Unassigned';
     return '<div class="cust ' + (open ? 'open' : '') + '" data-key="' + esc(c.key) + '"><div class="chead"><span class="chev">▶</span>' +
-      '<div class="cname"><b>' + esc(c.name) + '</b><small>' + esc(c.id) + (ALL_MODE && !REP_FILTER ? ' · ' + esc(c.rep || 'Unassigned') : '') + '</small></div>' +
+      '<div class="cname"><b>' + esc(c.name) + '</b><small>' + esc(c.id) + ' · Rep: ' + esc(repTxt) + '</small><div class="badges">' + badges.join('') + '</div></div>' +
       (c.worst > 30 ? '<span class="pill ' + chip(c.worst) + ' hide-m">oldest ' + c.worst + 'd</span>' : '') +
       '<div class="cnum hide-m">' + fmt0(c.over60) + '<small>over 60d</small></div>' +
       '<div class="cnum"><b>' + fmt0(c.total) + '</b><small>' + (PREV ? (prev == null ? 'new' : deltaHtml(c.total, prev)) : '&nbsp;') + '</small></div></div>' + docs + '</div>';
@@ -427,6 +539,133 @@ async function download(){
   btn.textContent = label; btn.disabled = false;
 }
 
+// ---------- PDF (for emailing to a rep) ----------
+// Shows balances, colour-coded aging, any open or overdue promise to pay, and dispute notes.
+// Deliberately leaves out the AR team's call notes: those are internal.
+const PDFC = { navy:[26,46,90], y:[255,242,179], o:[255,211,168], r:[255,179,179], cr:[230,244,236], sub:[232,239,251] };
+const pdfMoney = n => (n < 0 ? '-' : '') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 });
+
+function buildPdf(repCode, repName, rows){
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ orientation:'landscape', unit:'pt', format:'a4' });
+  const W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight();
+  const b = sumBuckets(rows);
+  doc.setFillColor(...PDFC.navy); doc.rect(0, 0, W, 58, 'F');
+  doc.setTextColor(255); doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.text('DFL Importers - AR Aging', 36, 27);
+  doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5);
+  doc.text((repName || repCode || 'Unassigned') + (repCode ? ' (' + repCode + ')' : '') + '   |   As of ' + SNAP.snapshot_date + '   |   aged from document date   |   all amounts in JMD', 36, 46);
+  doc.setTextColor(0);
+
+  doc.autoTable({
+    startY:72, theme:'grid', margin:{ left:36, right:36 },
+    head:[['Current 0-30', '31-60 days', '61-90 days', 'Over 90', 'Credits', 'Net balance']],
+    body:[[b.Current, b['31-60'], b['61-90'], b['90+'], b.Credit, b.total].map(pdfMoney)],
+    styles:{ halign:'center', fontSize:10 }, headStyles:{ fillColor:PDFC.navy },
+    didParseCell: d => {
+      if(d.section !== 'body') return;
+      const fills = [null, PDFC.y, PDFC.o, PDFC.r, PDFC.cr];
+      if(fills[d.column.index]) d.cell.styles.fillColor = fills[d.column.index];
+      d.cell.styles.fontStyle = 'bold';
+    }
+  });
+
+  const custs = groupCustomers(rows).sort((a, c) => c.over60 - a.over60 || c.total - a.total);
+  const body = [];
+  for(const c of custs){
+    const st = logStatus(c.id);
+    body.push([{ content: c.name + '  (' + c.id + ')    Total J$' + pdfMoney(c.total) + (c.over60 ? '    Over 60 days J$' + pdfMoney(c.over60) : ''),
+      colSpan:6, styles:{ fillColor:PDFC.sub, fontStyle:'bold', textColor:PDFC.navy } }]);
+    if(st.promise && (st.promiseOpen || st.promiseOverdue)){
+      body.push([{ content:'Promise to pay: J$' + pdfMoney(Number(st.promise.promise_amount) || 0) + ' by ' + dShort(st.promise.promise_date) + (st.promiseOverdue ? '  (OVERDUE)' : ''),
+        colSpan:6, styles:{ fontStyle:'italic', textColor: st.promiseOverdue ? [160, 30, 30] : PDFC.navy } }]);
+    }
+    for(const r of c.rows.slice().sort((a, z) => (a.is_credit - z.is_credit) || (z.days_aged || 0) - (a.days_aged || 0))){
+      const fill = r.is_credit ? PDFC.cr : r.days_aged > 90 ? PDFC.r : r.days_aged > 60 ? PDFC.o : r.days_aged > 30 ? PDFC.y : null;
+      const st_ = fill ? { fillColor:fill } : {};
+      const cell = (t, extra) => ({ content:String(t), styles:Object.assign({}, st_, extra || {}) });
+      body.push([
+        cell(r.doc_type + ' ' + r.ref_nbr + (r.currency && r.currency !== 'JMD' ? '  [' + r.currency + ' ' + pdfMoney(Math.abs(r.balance_doc)) + ']' : '')),
+        cell(r.doc_date || ''), cell(r.due_date || ''), cell(r.is_credit ? '-' : r.days_aged, { halign:'right' }), cell(r.terms || ''),
+        cell(pdfMoney(r.balance_jmd), { halign:'right' })
+      ]);
+      const n = NOTES.get(keyOf(r));
+      if(n) body.push([{ content:'Note: ' + n, colSpan:6, styles:Object.assign({ fontStyle:'italic', fontSize:8.5 }, st_) }]);
+    }
+  }
+  body.push([{ content:'GRAND TOTAL', colSpan:5, styles:{ fontStyle:'bold', halign:'right' } }, { content:pdfMoney(b.total), styles:{ fontStyle:'bold', halign:'right' } }]);
+
+  doc.autoTable({
+    startY: doc.lastAutoTable.finalY + 16, margin:{ left:36, right:36, bottom:34 }, theme:'plain',
+    head:[['Document', 'Doc date', 'Due date', 'Days', 'Terms', 'Balance (JMD)']], body,
+    styles:{ fontSize:9, cellPadding:3 }, headStyles:{ fillColor:PDFC.navy, textColor:255 },
+    columnStyles:{ 3:{ halign:'right' }, 5:{ halign:'right' } },
+    rowPageBreak:'avoid'
+  });
+
+  const pages = doc.internal.getNumberOfPages();
+  for(let i = 1; i <= pages; i++){
+    doc.setPage(i); doc.setFontSize(8); doc.setTextColor(120);
+    doc.text('Yellow over 30 days, orange over 60, red over 90. Credits in green.', 36, H - 16);
+    doc.text('Page ' + i + ' of ' + pages, W - 36, H - 16, { align:'right' });
+  }
+  return doc;
+}
+
+async function downloadPdf(){
+  const btn = $('pdfBtn'); btn.disabled = true; const label = btn.textContent; btn.textContent = 'Building…';
+  try {
+    const date = SNAP.snapshot_date;
+    if(ALL_MODE && !REP_FILTER){
+      const zip = new JSZip(); const by = new Map();
+      for(const r of ROWS){ const k = r.rep_code || UNASSIGNED; (by.get(k) || by.set(k, []).get(k)).push(r); }
+      for(const [k, rows] of by){
+        const code = k === UNASSIGNED ? null : k, name = rows.find(r => r.rep_name)?.rep_name || code || 'Unassigned';
+        zip.file('AR Aging - ' + safeName(code ? name + ' (' + code + ')' : 'Unassigned') + ' - ' + date + '.pdf', buildPdf(code, name, rows).output('arraybuffer'));
+      }
+      saveBlob(await zip.generateAsync({ type:'blob' }), 'AR Aging PDFs - all reps - ' + date + '.zip');
+    } else {
+      const rows = visibleRows();
+      const code = REP_FILTER === UNASSIGNED ? null : (REP_FILTER || rows.find(r => r.rep_code)?.rep_code || null);
+      const name = rows.find(r => r.rep_name)?.rep_name || code || 'Unassigned';
+      saveBlob(buildPdf(code, name, rows).output('blob'), 'AR Aging - ' + safeName(name) + ' - ' + date + '.pdf');
+    }
+  } catch(e){ console.error(e); alert('Could not build the PDF. Please try again.'); }
+  btn.textContent = label; btn.disabled = false;
+}
+
+// ---------- contact log ----------
+let LOG_CUST = null;
+function openLog(custId){
+  const c = groupCustomers(ROWS).find(x => x.id === custId); if(!c) return;
+  LOG_CUST = c;
+  $('logCust').textContent = c.name + ' (' + c.id + ') · balance J$' + fmt(c.total);
+  for(const id of ['lgSpoke','lgNote','lgPDate','lgPAmt','lgNext']) $(id).value = '';
+  $('lgMethod').value = 'call'; $('lgOutcome').value = ''; $('lgErr').textContent = '';
+  $('logModal').classList.remove('hidden'); $('lgOutcome').focus();
+}
+async function saveLog(){
+  const err = m => { $('lgErr').textContent = m; return false; };
+  const outcome = $('lgOutcome').value, pDate = $('lgPDate').value, pAmtRaw = $('lgPAmt').value.trim(), next = $('lgNext').value;
+  const note = $('lgNote').value.trim(), spoke = $('lgSpoke').value.trim();
+  if(!outcome) return err('Choose an outcome.');
+  if(pAmtRaw && !pDate) return err('A promise amount needs a promise date.');
+  if(outcome === 'promised' && !pDate) return err('Add the date they promised to pay by.');
+  if(pDate && pDate < TODAY) return err('The promise date is in the past.');
+  if(next && next < TODAY) return err('The follow-up date is in the past.');
+  const pAmt = pAmtRaw === '' ? null : Number(pAmtRaw);
+  if(pAmt != null && (!isFinite(pAmt) || pAmt < 0)) return err('Promise amount must be a positive number.');
+  if(!note && !spoke && !pDate && !next && outcome === 'other') return err('Add a note.');
+  $('lgSave').disabled = true;
+  const { error } = await sb.from('ar_contact_log').insert({
+    customer_id: LOG_CUST.id, customer_name: LOG_CUST.name, method: $('lgMethod').value, spoke_to: spoke || null, outcome,
+    note: note || null, promise_date: pDate || null, promise_amount: pAmt, next_followup: next || null
+  });
+  $('lgSave').disabled = false;
+  if(error) return err('Could not save: ' + error.message);
+  $('logModal').classList.add('hidden');
+  await loadLog(); renderCustomers();
+}
+
 // ---------- notes ----------
 let NOTE_KEY = null;
 function openNote(key){
@@ -498,7 +737,7 @@ async function init(profile){
     $('asof').textContent = ''; $('custList').innerHTML = '<div class="empty">Could not load AR data. Please refresh, or tell Joel if it keeps happening.</div>'; return;
   }
   if(!SNAP){ $('asof').textContent = ''; $('custList').innerHTML = '<div class="empty">No AR snapshot is available yet.</div>'; return; }
-  showFreshness(); setupRepSelect(); $('dlBtn').disabled = false; renderAll();
+  showFreshness(); setupRepSelect(); $('dlBtn').disabled = false; $('pdfBtn').disabled = false; renderAll();
 }
 
 $('repTable').addEventListener('click', e => {
@@ -506,13 +745,18 @@ $('repTable').addEventListener('click', e => {
   REP_FILTER = tr.dataset.rep; $('repSel').value = repLabelFor(REP_FILTER); OPEN.clear(); renderAll(); window.scrollTo({ top:0, behavior:'smooth' });
 });
 $('custList').addEventListener('click', e => {
+  const lb = e.target.closest('.logbtn'); if(lb){ e.stopPropagation(); openLog(lb.dataset.cust); return; }
   const nb = e.target.closest('.note'); if(nb){ e.stopPropagation(); openNote(nb.dataset.doc); return; }
   const h = e.target.closest('.chead'); if(!h) return;
   const key = h.parentElement.dataset.key; OPEN.has(key) ? OPEN.delete(key) : OPEN.add(key); renderCustomers();
 });
 $('q').addEventListener('input', renderCustomers);
 $('sortSel').addEventListener('change', renderCustomers);
+$('viewSel').addEventListener('change', renderCustomers);
 $('dlBtn').addEventListener('click', download);
+$('pdfBtn').addEventListener('click', downloadPdf);
+$('lgCancel').addEventListener('click', () => $('logModal').classList.add('hidden'));
+$('lgSave').addEventListener('click', saveLog);
 $('noteCancel').addEventListener('click', () => $('noteModal').classList.add('hidden'));
 $('noteSave').addEventListener('click', saveNote);
 
