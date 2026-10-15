@@ -4,15 +4,13 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0D1B3E">
-<link rel="icon" href="/favicon.ico">
-<link rel="manifest" href="/manifest.json">
 <title>DFL · AR Aging</title>
-<style>body { visibility: hidden; }</style>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&family=Open+Sans:wght@400;600&display=swap" rel="stylesheet">
 <!--
-  AR Aging — who owes DFL what, by age. One page, two audiences:
+  AR Aging — who owes DFL what, by age. Standalone page (own Supabase client and
+  Microsoft sign-in, same pattern as the dispatch site). One page, two audiences:
     * manager / admin / management / rep_management: every rep, filterable
     * rep: only their own customers (enforced by RLS, not by this page)
 
@@ -41,6 +39,12 @@
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--bf)}
 .hidden{display:none!important}
+.topbar{background:var(--navy);color:#fff;display:flex;align-items:center;gap:12px;padding:10px 16px}
+.topbar img{height:30px}.topbar #who{margin-left:auto;font-size:13px;color:#C9D4EE}
+.btn.small{height:32px;padding:0 12px;font-size:11px;background:transparent;color:#fff;border:1px solid #6F82B3}
+.gate{max-width:420px;margin:70px auto;background:#fff;border:1px solid var(--line);border-radius:10px;padding:28px;text-align:center}
+.gate h2{font:800 20px var(--hf);margin:0 0 8px}.gate p{color:var(--ink2);margin:0 0 18px}
+.gate .ms{display:inline-flex;align-items:center;gap:10px;width:auto;padding:0 18px}
 .page{max-width:1120px;margin:0 auto;padding:20px 16px 70px}
 .ptitle{font:800 22px var(--hf);margin:0 0 2px}
 .psub{color:var(--ink2);margin:0 0 14px;font-size:13px}
@@ -110,7 +114,9 @@ tr.d31 td{background:var(--y)}tr.d61 td{background:var(--o)}tr.d91 td{background
 </style>
 </head>
 <body>
-<div class="page">
+<div class="topbar"><img src="https://hzagwndglwhcepsirafi.supabase.co/storage/v1/object/public/Assets/DFL%20Logo%20Blue_White.png" alt="DFL Importers"><span id="who"></span><button class="btn ghost small hidden" id="signout">Sign out</button></div>
+<div class="gate hidden" id="gate"></div>
+<div class="page hidden" id="app">
   <h1 class="ptitle">AR Aging</h1>
   <p class="psub" id="asof">Loading…</p>
   <div id="banner"></div>
@@ -152,13 +158,7 @@ tr.d31 td{background:var(--y)}tr.d61 td{background:var(--o)}tr.d91 td{background
   </div>
 </div>
 
-<script>window.DFL_PAGE_TITLE = 'AR Aging';</script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-<script src="/shared/supabase-client.js"></script>
-<script src="/shared/routes.js"></script>
-<script src="/shared/auth-guard.js"></script>
-<script src="/shared/user-menu.js"></script>
-<script src="/shared/side-nav.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script>
@@ -169,6 +169,10 @@ const BUCKETS = ['Current','31-60','61-90','90+'];
 const UNASSIGNED = '__none__';
 const $ = id => document.getElementById(id);
 
+// Named sb, never supabase: the CDN script defines supabase as the library.
+const sb = supabase.createClient('https://hzagwndglwhcepsirafi.supabase.co', 'sb_publishable_5rAinfDT1K9kwEQnqYwlOA_-C5tk_6h', {
+  auth: { persistSession:true, autoRefreshToken:true, detectSessionInUrl:true, flowType:'pkce', storageKey:'dfl-ar-aging-auth' }
+});
 let PROFILE = null, ALL_MODE = false;
 let SNAP = null, PREV = null;
 let ROWS = [];                 // latest snapshot rows visible to this user
@@ -492,8 +496,33 @@ $('dlBtn').addEventListener('click', download);
 $('noteCancel').addEventListener('click', () => $('noteModal').classList.add('hidden'));
 $('noteSave').addEventListener('click', saveNote);
 
-document.addEventListener('dfl-auth-ready', e => init(e.detail.profile));
-if(window.DFL_PROFILE) init(window.DFL_PROFILE);
+const MS_LOGO = '<svg width="18" height="18" viewBox="0 0 21 21" aria-hidden="true"><path fill="#f25022" d="M1 1h9v9H1z"/><path fill="#7fba00" d="M11 1h9v9h-9z"/><path fill="#00a4ef" d="M1 11h9v9H1z"/><path fill="#ffb900" d="M11 11h9v9h-9z"/></svg>';
+function gate(html){ $('app').classList.add('hidden'); $('gate').classList.remove('hidden'); $('gate').innerHTML = html; }
+async function signIn(){
+  const { error } = await sb.auth.signInWithOAuth({ provider:'azure', options:{ scopes:'email openid profile', redirectTo: location.origin + location.pathname } });
+  if(error) alert("Couldn't start sign-in: " + error.message);
+}
+async function signOut(){ await sb.auth.signOut(); location.reload(); }
+$('signout').addEventListener('click', signOut);
+
+// Sign in with Microsoft, load the user's own profile row, check the role, then show the page.
+async function start(){
+  const { data:{ session } } = await sb.auth.getSession();
+  if(!session){
+    gate('<h2>AR Aging</h2><p>Sign in with your DFL Microsoft account.</p><button class="btn ms" id="signin">' + MS_LOGO + 'Sign in with Microsoft</button>');
+    $('signin').addEventListener('click', signIn); return;
+  }
+  $('signout').classList.remove('hidden'); $('who').textContent = session.user.email || '';
+  const { data: profile, error } = await sb.from('profiles').select('id,full_name,role,salesperson_id,active').eq('id', session.user.id).maybeSingle();
+  if(error || !profile || !profile.active || !(SEES_ALL.includes(profile.role) || profile.role === 'rep')){
+    gate('<h2>No access</h2><p>You are signed in as <b>' + esc(session.user.email) + '</b>, but this account is not set up for AR Aging. Ask Joel to add you.</p><button class="btn" id="so">Sign out</button>');
+    $('so').addEventListener('click', signOut); return;
+  }
+  $('who').textContent = (profile.full_name || session.user.email) + ' · ' + profile.role;
+  $('gate').classList.add('hidden'); $('app').classList.remove('hidden');
+  init(profile);
+}
+start();
 })();
 </script>
 </body>
