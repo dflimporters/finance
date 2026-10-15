@@ -102,6 +102,15 @@ tr.d31 td{background:var(--y)}tr.d61 td{background:var(--o)}tr.d91 td{background
 .mbox h3{margin:0 0 4px;font:800 16px var(--hf)}
 .mbox textarea{width:100%;min-height:90px;border:1px solid #CBD3E1;border-radius:6px;padding:9px;font:14px var(--bf);margin:10px 0}
 .mrow{display:flex;gap:8px;justify-content:flex-end}
+.seg{display:inline-flex;border:1px solid var(--blue);border-radius:6px;overflow:hidden;flex:0 0 auto}
+.seg button{font:700 12px var(--hf);background:#fff;color:var(--blue);border:0;height:40px;padding:0 16px;cursor:pointer}
+.seg button.on{background:var(--blue);color:#fff}
+.bar.filters{margin-top:-4px}
+.flt{display:flex;flex-direction:column;gap:2px;font:600 10.5px var(--hf);text-transform:uppercase;letter-spacing:.06em;color:var(--ink2)}
+.flt select,.flt input{font:14px var(--bf);text-transform:none;letter-spacing:0;color:var(--ink);background:#fff;border:1px solid #CBD3E1;border-radius:6px;padding:0 10px;height:36px;min-width:150px}
+th.sortable{cursor:pointer;user-select:none}th.sortable:hover{color:var(--blue)}
+.ctable td{vertical-align:top}.ctable th:nth-child(2),.ctable td:nth-child(2){text-align:left}.ctable .badges{margin-top:2px}
+tr.exp td{background:#FBFCFE}
 .badges{display:flex;flex-wrap:wrap;gap:4px;margin-top:3px}
 .bdg{display:inline-block;border-radius:10px;padding:0 8px;font:600 10.5px var(--hf);line-height:18px;background:#EEF1F7;color:var(--ink2)}
 .bdg.due{background:#FFE3B0;color:#7a4a00}.bdg.broken{background:var(--red-t);color:#8a1f1f}.bdg.prom{background:var(--blue-t);color:var(--navy2)}
@@ -126,6 +135,8 @@ tr.d31 td{background:var(--y)}tr.d61 td{background:var(--o)}tr.d91 td{background
   .strip{grid-template-columns:repeat(2,minmax(0,1fr))}
   .cnum.hide-m{display:none}
   .bar select,.bar input,.bar #repSel,.btn{width:100%;flex:1 1 100%}
+  .flt{flex:1 1 45%}.flt select,.flt input{width:100%;min-width:0}
+  .seg{width:100%}.seg button{flex:1}
   td,th{padding:7px 8px}
   .hide-m{display:none}
   .docs td:first-child{white-space:normal;min-width:120px}
@@ -140,23 +151,26 @@ tr.d31 td{background:var(--y)}tr.d61 td{background:var(--o)}tr.d91 td{background
   <p class="psub" id="asof">Loading…</p>
   <div id="banner"></div>
 
-  <div class="bar" id="bar">
+  <div class="bar">
+    <div class="seg" id="modeSeg" role="group" aria-label="View">
+      <button data-mode="rep" class="on">By rep</button><button data-mode="cust">By customer</button>
+    </div>
     <input id="repSel" class="hidden" list="repList" placeholder="All reps — type or pick" autocomplete="off" aria-label="Sales rep">
     <datalist id="repList"></datalist>
     <input id="q" type="search" placeholder="Search customer name or ID" aria-label="Search customers">
-    <select id="viewSel" aria-label="Show customers">
-      <option value="all">All customers</option>
-      <option value="due">Follow-ups due</option>
-      <option value="broken">Promises overdue</option>
-      <option value="stale">Not contacted in 14+ days</option>
-    </select>
-    <select id="sortSel" aria-label="Sort customers">
-      <option value="old">Biggest overdue (61+ days)</option>
-      <option value="total">Largest balance</option>
-      <option value="name">Name A–Z</option>
-    </select>
     <button class="btn" id="dlBtn" disabled>Download Excel</button>
     <button class="btn ghost" id="pdfBtn" disabled>Download PDF</button>
+  </div>
+  <div class="bar filters">
+    <label class="flt">Age <select id="ageSel" aria-label="Filter by age">
+      <option value="any">Any age</option><option value="30">Has over 30 days</option><option value="60">Has over 60 days</option><option value="90">Has over 90 days</option></select></label>
+    <label class="flt">Min J$ <input id="minAmt" type="number" min="0" step="1000" inputmode="decimal" placeholder="at that age or older" aria-label="Minimum amount"></label>
+    <label class="flt">Show <select id="viewSel" aria-label="Show customers">
+      <option value="all">All customers</option><option value="due">Follow-ups due</option><option value="broken">Promises overdue</option><option value="stale">Not contacted in 14+ days</option></select></label>
+    <label class="flt">Sort <select id="sortSel" aria-label="Sort customers">
+      <option value="old">Biggest overdue (61+ days)</option><option value="b90">Most over 90 days</option><option value="total">Largest balance</option>
+      <option value="name">Name A–Z</option><option value="last">Longest since contact</option><option value="custom" disabled hidden>Sorted by column</option></select></label>
+    <button class="btn ghost sm" id="clearBtn">Clear filters</button>
   </div>
 
   <div class="strip" id="kpis"></div>
@@ -321,6 +335,11 @@ function logStatus(customerId){
 }
 
 // ---------- aggregation ----------
+let MODE = 'rep';                        // 'rep' (rep summary, customers under it) | 'cust' (every customer, whole business)
+let CSORT = { key:'over60', dir:-1 };    // customer sort
+let RSORT = { key:'90+', dir:-1 };       // rep-table sort
+let LIMIT = 200;                         // customers shown before "show more"
+
 function visibleRows(){
   if(!ALL_MODE || !REP_FILTER) return ROWS;
   return ROWS.filter(r => REP_FILTER === UNASSIGNED ? !r.rep_code : r.rep_code === REP_FILTER);
@@ -344,45 +363,14 @@ function deltaHtml(cur, prev){
 }
 function chip(days){ return days > 90 ? 'r91' : days > 60 ? 'r61' : days > 30 ? 'r31' : ''; }
 
-// ---------- render ----------
-function renderKpis(){
-  const cur = sumBuckets(visibleRows()), prev = prevBuckets();
-  const tiles = [
-    ['Current','Current 0-30',''], ['31-60','31-60 days','b31'], ['61-90','61-90 days','b61'], ['90+','Over 90','b90'],
-    ['Credit','Credits','cr'], ['total','Net balance','']
-  ];
-  $('kpis').innerHTML = tiles.map(([k,l,c]) =>
-    '<div class="kpi ' + c + '"><div class="l">' + l + '</div><div class="v">' + fmt0(cur[k]) + '</div><div class="d">' + deltaHtml(cur[k], prev[k]) + '</div></div>').join('');
-}
-
-function renderRepTable(){
-  const show = ALL_MODE && !REP_FILTER;
-  $('repPanel').classList.toggle('hidden', !show);
-  if(!show) return;
-  const by = {};
-  for(const r of ROWS){
-    const k = r.rep_code || UNASSIGNED;
-    const o = by[k] || (by[k] = { name: r.rep_name || (r.rep_code ? '' : 'No rep'), b: { Current:0,'31-60':0,'61-90':0,'90+':0,Credit:0,total:0 } });
-    if(!o.name && r.rep_name) o.name = r.rep_name;
-    o.b[r.bucket] += r.balance_jmd; o.b.total += r.balance_jmd;
-  }
-  const keys = Object.keys(by).sort((a,b) => by[b].b['90+'] - by[a].b['90+']);
-  const tot = sumBuckets(ROWS);
-  $('repTable').innerHTML = '<tr><th>Rep</th><th>Current</th><th>31-60</th><th>61-90</th><th>90+</th><th class="hide-m">Credits</th><th>Net</th><th class="hide-m">Change</th></tr>' +
-    keys.map(k => { const b = by[k].b;
-      return '<tr class="click" data-rep="' + esc(k) + '"><td><b>' + esc(k === UNASSIGNED ? 'Unassigned' : k) + '</b> <small style="color:var(--ink3)">' + esc(by[k].name) + '</small></td>' +
-        '<td>' + fmt0(b.Current) + '</td><td>' + fmt0(b['31-60']) + '</td><td>' + fmt0(b['61-90']) + '</td><td><b>' + fmt0(b['90+']) + '</b></td>' +
-        '<td class="hide-m neg">' + fmt0(b.Credit) + '</td><td><b>' + fmt0(b.total) + '</b></td><td class="hide-m">' + deltaHtml(b.total, PREV_AGG.byRep[k] || 0) + '</td></tr>'; }).join('') +
-    '<tr><td><b>All reps</b></td><td><b>' + fmt0(tot.Current) + '</b></td><td><b>' + fmt0(tot['31-60']) + '</b></td><td><b>' + fmt0(tot['61-90']) + '</b></td><td><b>' + fmt0(tot['90+']) + '</b></td><td class="hide-m neg"><b>' + fmt0(tot.Credit) + '</b></td><td><b>' + fmt0(tot.total) + '</b></td><td class="hide-m"></td></tr>';
-}
-
 function groupCustomers(rows){
   const m = new Map();
   for(const r of rows){
     const k = (r.rep_code || UNASSIGNED) + '|' + r.customer_id;
     let c = m.get(k);
-    if(!c) m.set(k, c = { key:k, id:r.customer_id, name:r.customer_name || r.customer_id, rep:r.rep_code, repName:r.rep_name, rows:[], total:0, over60:0, over90:0, worst:0 });
-    c.rows.push(r); c.total += r.balance_jmd;
+    if(!c) m.set(k, c = { key:k, id:r.customer_id, name:r.customer_name || r.customer_id, rep:r.rep_code, repName:r.rep_name, rows:[], total:0, over60:0, over90:0, worst:0,
+      b:{ Current:0, '31-60':0, '61-90':0, '90+':0, Credit:0 } });
+    c.rows.push(r); c.total += r.balance_jmd; c.b[r.bucket] += r.balance_jmd;
     if(!r.is_credit){
       if(r.bucket === '61-90' || r.bucket === '90+') c.over60 += r.balance_jmd;
       if(r.bucket === '90+') c.over90 += r.balance_jmd;
@@ -390,6 +378,98 @@ function groupCustomers(rows){
     }
   }
   return [...m.values()];
+}
+
+// ---------- filters ----------
+// Filters work on whole customers: a customer is kept if it has at least `min` J$ in the chosen age
+// range or older ("Has over 60 days" = 61-90 + 90+). Everything on screen (tiles, rep table, lists)
+// is built from the customers that pass, so the numbers always add up to what you are looking at.
+function filtersActive(){ return $('ageSel').value !== 'any' || !!$('minAmt').value || $('viewSel').value !== 'all' || !!$('q').value.trim(); }
+function agedAmt(c, age){
+  return age === 'any' ? c.total : age === '30' ? c.b['31-60'] + c.b['61-90'] + c.b['90+'] : age === '60' ? c.b['61-90'] + c.b['90+'] : c.b['90+'];
+}
+function custPass(c){
+  const age = $('ageSel').value, min = Number($('minAmt').value) || 0, q = $('q').value.trim().toLowerCase(), view = $('viewSel').value;
+  if(q && !(c.name.toLowerCase().includes(q) || c.id.toLowerCase().includes(q))) return false;
+  const amt = agedAmt(c, age);
+  if(age !== 'any' && amt <= 0) return false;
+  if(min && amt < min) return false;
+  if(view !== 'all'){
+    const st = c.st;
+    const ok = view === 'due' ? st.followupDue : view === 'broken' ? st.promiseOverdue : (c.total > 0 && (st.daysAgo == null || st.daysAgo >= 14));
+    if(!ok) return false;
+  }
+  return true;
+}
+function repMatch(c){ return !ALL_MODE || !REP_FILTER || (REP_FILTER === UNASSIGNED ? !c.rep : c.rep === REP_FILTER); }
+
+// One pass per render: every customer with its log status, then the ones that pass the filters.
+function compute(){
+  const all = groupCustomers(ROWS);
+  for(const c of all) c.st = logStatus(c.id);
+  const pass = all.filter(custPass);
+  return { all, pass, scoped: pass.filter(repMatch) };
+}
+
+// ---------- sorting ----------
+const ACC = {
+  name: c => c.name.toLowerCase(), rep: c => (c.repName || c.rep || '~').toLowerCase(),
+  Current: c => c.b.Current, '31-60': c => c.b['31-60'], '61-90': c => c.b['61-90'], '90+': c => c.b['90+'], Credit: c => c.b.Credit,
+  total: c => c.total, over60: c => c.over60,
+  change: c => c.total - (PREV_AGG.cust[c.key] == null ? 0 : PREV_AGG.cust[c.key]),
+  last: c => c.st.daysAgo == null ? 1e9 : c.st.daysAgo
+};
+function sortBy(list, S, acc){
+  const f = acc[S.key] || (() => 0);
+  return list.slice().sort((a, b) => {
+    const x = f(a), y = f(b), r = typeof x === 'string' ? x.localeCompare(y) : x - y;
+    return r ? r * S.dir : String(a.name || a.rep).localeCompare(String(b.name || b.rep));
+  });
+}
+function arrow(S, key){ return S.key === key ? (S.dir < 0 ? ' ▼' : ' ▲') : ''; }
+function toggleSort(S, key, firstDir){ S.dir = S.key === key ? -S.dir : firstDir; S.key = key; }
+const TEXT_KEYS = ['name', 'rep'];
+
+// ---------- render ----------
+function renderKpis(scoped){
+  const cur = sumBuckets([].concat(...scoped.map(c => c.rows)));
+  const prev = filtersActive() ? null : prevBuckets();
+  const tiles = [
+    ['Current','Current 0-30',''], ['31-60','31-60 days','b31'], ['61-90','61-90 days','b61'], ['90+','Over 90','b90'],
+    ['Credit','Credits','cr'], ['total','Net balance','']
+  ];
+  $('kpis').innerHTML = tiles.map(([k,l,c]) =>
+    '<div class="kpi ' + c + '"><div class="l">' + l + '</div><div class="v">' + fmt0(cur[k]) + '</div><div class="d">' + (prev ? deltaHtml(cur[k], prev[k]) : '') + '</div></div>').join('');
+}
+
+function renderRepTable(pass){
+  const show = ALL_MODE && MODE === 'rep' && !REP_FILTER;
+  $('repPanel').classList.toggle('hidden', !show);
+  if(!show) return;
+  const by = {};
+  for(const c of pass){
+    const k = c.rep || UNASSIGNED;
+    const o = by[k] || (by[k] = { key:k, name: c.repName || (c.rep ? '' : 'No rep'), b:{ Current:0,'31-60':0,'61-90':0,'90+':0,Credit:0 }, total:0 });
+    if(!o.name && c.repName) o.name = c.repName;
+    for(const x in c.b) o.b[x] += c.b[x];
+    o.total += c.total;
+  }
+  const showDelta = !filtersActive();
+  const racc = { rep: o => o.key.toLowerCase(), Current: o => o.b.Current, '31-60': o => o.b['31-60'], '61-90': o => o.b['61-90'], '90+': o => o.b['90+'],
+    Credit: o => o.b.Credit, total: o => o.total, change: o => o.total - (PREV_AGG.byRep[o.key] || 0) };
+  const reps = sortBy(Object.values(by), RSORT, racc);
+  const tot = { Current:0, '31-60':0, '61-90':0, '90+':0, Credit:0, total:0 };
+  for(const o of reps){ for(const x in o.b) tot[x] += o.b[x]; tot.total += o.total; }
+  const th = (key, label, cls) => '<th class="sortable ' + (cls || '') + '" data-rsort="' + key + '">' + label + arrow(RSORT, key) + '</th>';
+  $('repTable').innerHTML = '<tr>' + th('rep', 'Rep') + th('Current', 'Current') + th('31-60', '31-60') + th('61-90', '61-90') + th('90+', '90+') +
+    th('Credit', 'Credits', 'hide-m') + th('total', 'Net') + (showDelta ? th('change', 'Change', 'hide-m') : '') + '<th class="hide-m">Customers</th></tr>' +
+    reps.map(o => '<tr class="click" data-rep="' + esc(o.key) + '"><td><b>' + esc(o.key === UNASSIGNED ? 'Unassigned' : o.key) + '</b> <small style="color:var(--ink3)">' + esc(o.name) + '</small></td>' +
+      '<td>' + fmt0(o.b.Current) + '</td><td>' + fmt0(o.b['31-60']) + '</td><td>' + fmt0(o.b['61-90']) + '</td><td><b>' + fmt0(o.b['90+']) + '</b></td>' +
+      '<td class="hide-m neg">' + fmt0(o.b.Credit) + '</td><td><b>' + fmt0(o.total) + '</b></td>' +
+      (showDelta ? '<td class="hide-m">' + deltaHtml(o.total, PREV_AGG.byRep[o.key] || 0) + '</td>' : '') +
+      '<td class="hide-m">' + pass.filter(c => (c.rep || UNASSIGNED) === o.key).length + '</td></tr>').join('') +
+    '<tr><td><b>All reps</b></td><td><b>' + fmt0(tot.Current) + '</b></td><td><b>' + fmt0(tot['31-60']) + '</b></td><td><b>' + fmt0(tot['61-90']) + '</b></td><td><b>' + fmt0(tot['90+']) + '</b></td><td class="hide-m neg"><b>' + fmt0(tot.Credit) + '</b></td><td><b>' + fmt0(tot.total) + '</b></td>' +
+    (showDelta ? '<td class="hide-m"></td>' : '') + '<td class="hide-m"><b>' + pass.length + '</b></td></tr>';
 }
 
 function docRow(r){
@@ -418,44 +498,71 @@ function logSection(c, st){
     (items || '<div style="color:var(--ink3);font-size:13px">No contact logged yet.</div>') + '</div>';
 }
 
-function renderCustomers(){
-  const q = $('q').value.trim().toLowerCase();
-  let list = groupCustomers(visibleRows());
-  if(q) list = list.filter(c => c.name.toLowerCase().includes(q) || c.id.toLowerCase().includes(q));
-  const view = $('viewSel').value;
-  if(view !== 'all') list = list.filter(c => {
-    const st = logStatus(c.id);
-    return view === 'due' ? st.followupDue : view === 'broken' ? st.promiseOverdue
-         : (c.total > 0 && (st.daysAgo == null || st.daysAgo >= 14));
-  });
-  const s = $('sortSel').value;
-  list.sort(s === 'name' ? (a,b) => a.name.localeCompare(b.name)
-          : s === 'total' ? (a,b) => b.total - a.total
-          : (a,b) => b.over60 - a.over60 || b.total - a.total);
-  $('custHead').textContent = list.length + ' customer' + (list.length === 1 ? '' : 's');
-  if(!list.length){ $('custList').innerHTML = '<div class="empty">Nothing to show.</div>'; return; }
-  const shown = list.slice(0, 200);
-  $('custList').innerHTML = shown.map(c => {
-    const prev = PREV_AGG.cust[c.key];
-    const open = OPEN.has(c.key);
-    const st = logStatus(c.id);
-    const docs = open ? '<div class="docs">' + logSection(c, st) + '<div class="scroll"><table><tr><th>Document</th><th class="hide-m">Date</th><th>Days</th><th class="hide-m">Terms</th><th>Balance (JMD)</th><th></th></tr>' +
-      c.rows.slice().sort((a,b) => (a.is_credit - b.is_credit) || (b.days_aged||0) - (a.days_aged||0)).map(docRow).join('') + '</table></div></div>' : '';
-    const badges = [];
-    if(st.followupDue) badges.push('<span class="bdg due">Follow-up due ' + esc(dShort(st.last.next_followup)) + '</span>');
-    if(st.promiseOverdue) badges.push('<span class="bdg broken">Promise overdue: J$' + fmt0(Number(st.promise.promise_amount) || 0) + ' by ' + esc(dShort(st.promise.promise_date)) + '</span>');
-    else if(st.promiseOpen) badges.push('<span class="bdg prom">Promised J$' + fmt0(Number(st.promise.promise_amount) || 0) + ' by ' + esc(dShort(st.promise.promise_date)) + '</span>');
-    badges.push('<span class="bdg">' + (st.last ? 'Last contact ' + (st.daysAgo === 0 ? 'today' : st.daysAgo + 'd ago') : 'Never contacted') + '</span>');
-    const repTxt = c.rep ? (c.repName ? c.repName + ' (' + c.rep + ')' : c.rep) : 'Unassigned';
+function badgesFor(st){
+  const b = [];
+  if(st.followupDue) b.push('<span class="bdg due">Follow-up due ' + esc(dShort(st.last.next_followup)) + '</span>');
+  if(st.promiseOverdue) b.push('<span class="bdg broken">Promise overdue: J$' + fmt0(Number(st.promise.promise_amount) || 0) + ' by ' + esc(dShort(st.promise.promise_date)) + '</span>');
+  else if(st.promiseOpen) b.push('<span class="bdg prom">Promised J$' + fmt0(Number(st.promise.promise_amount) || 0) + ' by ' + esc(dShort(st.promise.promise_date)) + '</span>');
+  b.push('<span class="bdg">' + (st.last ? 'Last contact ' + (st.daysAgo === 0 ? 'today' : st.daysAgo + 'd ago') : 'Never contacted') + '</span>');
+  return '<div class="badges">' + b.join('') + '</div>';
+}
+function docsPanel(c){
+  return logSection(c, c.st) + '<div class="scroll"><table><tr><th>Document</th><th class="hide-m">Date</th><th>Days</th><th class="hide-m">Terms</th><th>Balance (JMD)</th><th></th></tr>' +
+    c.rows.slice().sort((a,b) => (a.is_credit - b.is_credit) || (b.days_aged||0) - (a.days_aged||0)).map(docRow).join('') + '</table></div>';
+}
+const repText = c => c.rep ? (c.repName ? c.repName + ' (' + c.rep + ')' : c.rep) : 'Unassigned';
+
+// Rep view: customer cards (the list under the rep summary).
+function renderCards(list){
+  const shown = list.slice(0, LIMIT);
+  return shown.map(c => {
+    const prev = PREV_AGG.cust[c.key], open = OPEN.has(c.key);
     return '<div class="cust ' + (open ? 'open' : '') + '" data-key="' + esc(c.key) + '"><div class="chead"><span class="chev">▶</span>' +
-      '<div class="cname"><b>' + esc(c.name) + '</b><small>' + esc(c.id) + ' · Rep: ' + esc(repTxt) + '</small><div class="badges">' + badges.join('') + '</div></div>' +
+      '<div class="cname"><b>' + esc(c.name) + '</b><small>' + esc(c.id) + ' · Rep: ' + esc(repText(c)) + '</small>' + badgesFor(c.st) + '</div>' +
       (c.worst > 30 ? '<span class="pill ' + chip(c.worst) + ' hide-m">oldest ' + c.worst + 'd</span>' : '') +
       '<div class="cnum hide-m">' + fmt0(c.over60) + '<small>over 60d</small></div>' +
-      '<div class="cnum"><b>' + fmt0(c.total) + '</b><small>' + (PREV ? (prev == null ? 'new' : deltaHtml(c.total, prev)) : '&nbsp;') + '</small></div></div>' + docs + '</div>';
-  }).join('') + (list.length > shown.length ? '<div class="empty">Showing the first 200 of ' + list.length + '. Use search to narrow down.</div>' : '');
+      '<div class="cnum"><b>' + fmt0(c.total) + '</b><small>' + (PREV ? (prev == null ? 'new' : deltaHtml(c.total, prev)) : '&nbsp;') + '</small></div></div>' +
+      (open ? '<div class="docs">' + docsPanel(c) + '</div>' : '') + '</div>';
+  }).join('');
 }
 
-function renderAll(){ renderKpis(); renderRepTable(); renderCustomers(); }
+// Customer view: one table row per customer across the whole business, every column sortable.
+function renderCustTable(list){
+  const shown = list.slice(0, LIMIT);
+  const th = (key, label, cls) => '<th class="sortable ' + (cls || '') + '" data-csort="' + key + '">' + label + arrow(CSORT, key) + '</th>';
+  return '<div class="scroll"><table class="ctable"><tr>' + th('name', 'Customer') + th('rep', 'Rep', 'hide-m') + th('Current', 'Current', 'hide-m') + th('31-60', '31-60', 'hide-m') +
+    th('61-90', '61-90', 'hide-m') + th('90+', '90+') + th('Credit', 'Credits', 'hide-m') + th('total', 'Net') + th('change', 'Change', 'hide-m') + th('last', 'Last contact', 'hide-m') + '</tr>' +
+    shown.map(c => {
+      const prev = PREV_AGG.cust[c.key], open = OPEN.has(c.key);
+      return '<tr class="crow click" data-key="' + esc(c.key) + '"><td><b>' + esc(c.name) + '</b> <small style="color:var(--ink3)">' + esc(c.id) + '</small>' + badgesFor(c.st) + '</td>' +
+        '<td class="hide-m">' + esc(repText(c)) + '</td><td class="hide-m">' + fmt0(c.b.Current) + '</td><td class="hide-m">' + fmt0(c.b['31-60']) + '</td><td class="hide-m">' + fmt0(c.b['61-90']) + '</td>' +
+        '<td><b>' + fmt0(c.b['90+']) + '</b></td><td class="hide-m neg">' + fmt0(c.b.Credit) + '</td><td><b>' + fmt0(c.total) + '</b></td>' +
+        '<td class="hide-m">' + (PREV ? (prev == null ? 'new' : deltaHtml(c.total, prev)) : '') + '</td>' +
+        '<td class="hide-m">' + (c.st.last ? (c.st.daysAgo === 0 ? 'today' : c.st.daysAgo + 'd ago') : '—') + '</td></tr>' +
+        (open ? '<tr class="exp"><td colspan="10" style="padding:0;text-align:left;white-space:normal"><div class="docs" style="display:block">' + docsPanel(c) + '</div></td></tr>' : '');
+    }).join('') + '</table></div>';
+}
+
+function drawCustomers(scoped){
+  const list = MODE === 'cust'
+    ? sortBy(scoped, CSORT, ACC)
+    : sortBy(scoped, CSORT, ACC);
+  $('custHead').textContent = list.length + ' customer' + (list.length === 1 ? '' : 's') + (filtersActive() ? ' (filtered)' : '');
+  if(!list.length){ $('custList').innerHTML = '<div class="empty">Nothing matches these filters.</div>'; return; }
+  $('custList').innerHTML = (MODE === 'cust' ? renderCustTable(list) : renderCards(list)) +
+    (list.length > LIMIT ? '<div class="empty"><button class="btn ghost" id="moreBtn">Show ' + Math.min(200, list.length - LIMIT) + ' more (' + (list.length - LIMIT) + ' left)</button></div>' : '');
+}
+
+function renderAll(){
+  const g = compute();
+  document.querySelectorAll('#modeSeg button').forEach(b => b.classList.toggle('on', b.dataset.mode === MODE));
+  $('sortSel').parentElement.classList.toggle('hidden', MODE === 'cust');
+  renderKpis(g.scoped); renderRepTable(g.pass); drawCustomers(g.scoped);
+  const sm = { over60:"old", "90+":"b90", total:"total", name:"name", last:"last" };
+  $("sortSel").value = sm[CSORT.key] || "custom";
+}
+
+function renderCustomers(){ renderAll(); }
 
 // ---------- Excel ----------
 const FILL = { y:'FFFFF2B3', o:'FFFFD3A8', r:'FFFFB3B3', hdr:'FF1A2E5A', sub:'FFE8EFFB', cr:'FFE6F4EC' };
@@ -737,22 +844,41 @@ async function init(profile){
     $('asof').textContent = ''; $('custList').innerHTML = '<div class="empty">Could not load AR data. Please refresh, or tell Joel if it keeps happening.</div>'; return;
   }
   if(!SNAP){ $('asof').textContent = ''; $('custList').innerHTML = '<div class="empty">No AR snapshot is available yet.</div>'; return; }
+  try { const m = localStorage.getItem('ar_mode'); if(m === 'rep' || m === 'cust') MODE = m; } catch(_) {}
   showFreshness(); setupRepSelect(); $('dlBtn').disabled = false; $('pdfBtn').disabled = false; renderAll();
 }
 
 $('repTable').addEventListener('click', e => {
+  const rs = e.target.closest('th[data-rsort]');
+  if(rs){ const k = rs.dataset.rsort; toggleSort(RSORT, k, k === 'rep' ? 1 : -1); renderAll(); return; }
   const tr = e.target.closest('tr[data-rep]'); if(!tr) return;
   REP_FILTER = tr.dataset.rep; $('repSel').value = repLabelFor(REP_FILTER); OPEN.clear(); renderAll(); window.scrollTo({ top:0, behavior:'smooth' });
 });
 $('custList').addEventListener('click', e => {
+  const cs = e.target.closest('th[data-csort]');
+  if(cs){ const k = cs.dataset.csort; toggleSort(CSORT, k, TEXT_KEYS.includes(k) ? 1 : -1); LIMIT = 200; renderAll(); return; }
+  if(e.target.closest('#moreBtn')){ LIMIT += 200; renderAll(); return; }
+  const row = e.target.closest('tr.crow');
+  if(row && !e.target.closest('button')){ const key = row.dataset.key; OPEN.has(key) ? OPEN.delete(key) : OPEN.add(key); renderAll(); return; }
   const lb = e.target.closest('.logbtn'); if(lb){ e.stopPropagation(); openLog(lb.dataset.cust); return; }
   const nb = e.target.closest('.note'); if(nb){ e.stopPropagation(); openNote(nb.dataset.doc); return; }
   const h = e.target.closest('.chead'); if(!h) return;
   const key = h.parentElement.dataset.key; OPEN.has(key) ? OPEN.delete(key) : OPEN.add(key); renderCustomers();
 });
-$('q').addEventListener('input', renderCustomers);
-$('sortSel').addEventListener('change', renderCustomers);
-$('viewSel').addEventListener('change', renderCustomers);
+const refilter = () => { LIMIT = 200; renderAll(); };
+$('q').addEventListener('input', refilter);
+$('ageSel').addEventListener('change', refilter);
+$('minAmt').addEventListener('input', refilter);
+const SORT_MAP = { old:['over60',-1], b90:['90+',-1], total:['total',-1], name:['name',1], last:['last',-1] };
+$('sortSel').addEventListener('change', () => { const m = SORT_MAP[$('sortSel').value]; if(m){ CSORT = { key:m[0], dir:m[1] }; refilter(); } });
+$('clearBtn').addEventListener('click', () => { $('ageSel').value = 'any'; $('minAmt').value = ''; $('viewSel').value = 'all'; $('q').value = ''; refilter(); });
+$('modeSeg').addEventListener('click', e => {
+  const b = e.target.closest('button[data-mode]'); if(!b || b.dataset.mode === MODE) return;
+  MODE = b.dataset.mode; OPEN.clear(); LIMIT = 200;
+  try { localStorage.setItem('ar_mode', MODE); } catch(_) {}
+  renderAll();
+});
+$('viewSel').addEventListener('change', refilter);
 $('dlBtn').addEventListener('click', download);
 $('pdfBtn').addEventListener('click', downloadPdf);
 $('lgCancel').addEventListener('click', () => $('logModal').classList.add('hidden'));
