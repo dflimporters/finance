@@ -3,3 +3,7 @@
 *.xls
 *.txt
 *.md
+
+# real AR rows used as test fixture
+web/test/rows.json
+web/test/index.html
