@@ -164,7 +164,8 @@ tr.d31 td{background:var(--y)}tr.d61 td{background:var(--o)}tr.d91 td{background
 <script>
 (function(){
 "use strict";
-const SEES_ALL = ['admin','manager','management','rep_management'];
+// Admin only while testing. Must match ar_sees_all() in Postgres; widen both together.
+const SEES_ALL = ['admin'];
 const BUCKETS = ['Current','31-60','61-90','90+'];
 const UNASSIGNED = '__none__';
 const $ = id => document.getElementById(id);
@@ -514,7 +515,7 @@ async function start(){
   }
   $('signout').classList.remove('hidden'); $('who').textContent = session.user.email || '';
   const { data: profile, error } = await sb.from('profiles').select('id,full_name,role,salesperson_id,active').eq('id', session.user.id).maybeSingle();
-  if(error || !profile || !profile.active || !(SEES_ALL.includes(profile.role) || profile.role === 'rep')){
+  if(error || !profile || !profile.active || !SEES_ALL.includes(profile.role)){
     gate('<h2>No access</h2><p>You are signed in as <b>' + esc(session.user.email) + '</b>, but this account is not set up for AR Aging. Ask Joel to add you.</p><button class="btn" id="so">Sign out</button>');
     $('so').addEventListener('click', signOut); return;
   }
