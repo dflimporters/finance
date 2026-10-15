@@ -54,6 +54,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--bf)}
 .bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}
 .bar select,.bar input{font:14px var(--bf);color:var(--ink);background:#fff;border:1px solid #CBD3E1;border-radius:6px;padding:0 10px;height:40px}
 .bar input{flex:1;min-width:160px}
+.bar #repSel{flex:0 0 260px}
 .btn{font:700 12px var(--hf);letter-spacing:.04em;background:var(--blue);color:#fff;border:0;border-radius:6px;height:40px;padding:0 16px;cursor:pointer}
 .btn.ghost{background:#fff;color:var(--blue);border:1px solid var(--blue)}
 .btn:disabled{opacity:.55;cursor:default}
@@ -106,7 +107,7 @@ tr.d31 td{background:var(--y)}tr.d61 td{background:var(--o)}tr.d91 td{background
   .page{padding:14px 12px 70px}
   .strip{grid-template-columns:repeat(2,minmax(0,1fr))}
   .cnum.hide-m{display:none}
-  .bar select,.bar input,.btn{width:100%;flex:1 1 100%}
+  .bar select,.bar input,.bar #repSel,.btn{width:100%;flex:1 1 100%}
   td,th{padding:7px 8px}
   .hide-m{display:none}
   .docs td:first-child{white-space:normal;min-width:120px}
@@ -122,7 +123,8 @@ tr.d31 td{background:var(--y)}tr.d61 td{background:var(--o)}tr.d91 td{background
   <div id="banner"></div>
 
   <div class="bar" id="bar">
-    <select id="repSel" class="hidden" aria-label="Sales rep"></select>
+    <input id="repSel" class="hidden" list="repList" placeholder="All reps — type or pick" autocomplete="off" aria-label="Sales rep">
+    <datalist id="repList"></datalist>
     <input id="q" type="search" placeholder="Search customer name or ID" aria-label="Search customers">
     <select id="sortSel" aria-label="Sort customers">
       <option value="old">Biggest overdue (61+ days)</option>
@@ -445,15 +447,32 @@ async function saveNote(){
 }
 
 // ---------- wiring ----------
+const REP_OPTS = [];   // [{ key, label }] for the rep box
+function repLabelFor(key){ const o = REP_OPTS.find(x => x.key === key); return o ? o.label : ''; }
 function setupRepSelect(){
   const sel = $('repSel');
   if(!ALL_MODE){ sel.classList.add('hidden'); return; }
   const seen = new Map();
   for(const r of ROWS){ const k = r.rep_code || UNASSIGNED; if(!seen.has(k)) seen.set(k, r.rep_name || ''); else if(!seen.get(k) && r.rep_name) seen.set(k, r.rep_name); }
   const keys = [...seen.keys()].sort((a,b) => (a === UNASSIGNED) - (b === UNASSIGNED) || a.localeCompare(b));
-  sel.innerHTML = '<option value="">All reps</option>' + keys.map(k => '<option value="' + esc(k) + '">' + esc(k === UNASSIGNED ? 'Unassigned (no rep)' : k + (seen.get(k) ? ' — ' + seen.get(k) : '')) + '</option>').join('');
+  REP_OPTS.length = 0;
+  for(const k of keys) REP_OPTS.push({ key:k, label: k === UNASSIGNED ? 'Unassigned (no rep)' : k + (seen.get(k) ? ' — ' + seen.get(k) : '') });
+  $('repList').innerHTML = REP_OPTS.map(o => '<option value="' + esc(o.label) + '"></option>').join('');
   sel.classList.remove('hidden');
-  sel.onchange = () => { REP_FILTER = sel.value; OPEN.clear(); renderAll(); };
+  // Type to narrow, or click and pick. Empty = all reps. Text that matches nothing reverts.
+  sel.addEventListener('focus', () => sel.select());
+  sel.addEventListener('change', () => {
+    const v = sel.value.trim().toLowerCase();
+    let key = '';
+    if(v){
+      const exact = REP_OPTS.find(o => o.label.toLowerCase() === v || o.key.toLowerCase() === v);
+      const part = REP_OPTS.filter(o => o.label.toLowerCase().includes(v));
+      const hit = exact || (part.length === 1 ? part[0] : null);
+      if(!hit){ sel.value = repLabelFor(REP_FILTER); return; }
+      key = hit.key;
+    }
+    REP_FILTER = key; sel.value = repLabelFor(key); OPEN.clear(); renderAll();
+  });
 }
 
 function showFreshness(){
@@ -484,7 +503,7 @@ async function init(profile){
 
 $('repTable').addEventListener('click', e => {
   const tr = e.target.closest('tr[data-rep]'); if(!tr) return;
-  REP_FILTER = tr.dataset.rep; $('repSel').value = REP_FILTER; OPEN.clear(); renderAll(); window.scrollTo({ top:0, behavior:'smooth' });
+  REP_FILTER = tr.dataset.rep; $('repSel').value = repLabelFor(REP_FILTER); OPEN.clear(); renderAll(); window.scrollTo({ top:0, behavior:'smooth' });
 });
 $('custList').addEventListener('click', e => {
   const nb = e.target.closest('.note'); if(nb){ e.stopPropagation(); openNote(nb.dataset.doc); return; }
