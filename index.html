@@ -908,7 +908,7 @@ async function start(){
     gate('<h2>No access</h2><p>You are signed in as <b>' + esc(session.user.email) + '</b>, but this account is not set up for AR Aging. Ask Joel to add you.</p><button class="btn" id="so">Sign out</button>');
     $('so').addEventListener('click', signOut); return;
   }
-  $('who').textContent = (access.name || session.user.email) + ' · ' + access.level;
+  $('who').textContent = (access.name || session.user.email) + ' · ' + access.level.replace('_', ' ');
   $('gate').classList.add('hidden'); $('app').classList.remove('hidden');
   init({ id: session.user.id, full_name: access.name, role: access.level });
 }
