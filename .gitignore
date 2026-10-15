@@ -1,0 +1,5 @@
+﻿# AR data and working files - keep out of Git
+*.xlsx
+*.xls
+*.txt
+*.md
