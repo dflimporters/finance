@@ -129,10 +129,20 @@ tr.exp td{background:#FBFCFE}
 .fgrid input,.fgrid select{height:38px;border:1px solid #CBD3E1;border-radius:6px;padding:0 9px;font:14px var(--bf);width:100%;background:#fff}
 .mbox.wide{max-width:520px;max-height:92vh;overflow:auto}
 .ferr{color:#8a1f1f;font-size:12.5px;min-height:18px;margin-top:6px}
+.colsum{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:12px 14px}
+.colcard{border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-width:0}
+.colcard .l{font:600 10px var(--hf);text-transform:uppercase;letter-spacing:.09em;color:var(--ink2)}
+.colcard .v{font:700 17px var(--hf);font-variant-numeric:tabular-nums}
+.colcard .s{font-size:12px;color:var(--ink2)}
+.pbar{height:8px;background:#E8ECF4;border-radius:4px;overflow:hidden;margin:6px 0 4px}
+.pbar i{display:block;height:100%;background:var(--blue)}
+.pbar i.ok{background:var(--green)}
+.pct{font-weight:700}.pct.ok{color:var(--green)}.pct.low{color:#B4540A}
 @media (max-width:900px){.strip{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media (max-width:640px){
   .page{padding:14px 12px 70px}
   .strip{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .colsum{grid-template-columns:1fr}
   .cnum.hide-m{display:none}
   .bar select,.bar input,.bar #repSel,.btn{width:100%;flex:1 1 100%}
   .flt{flex:1 1 45%}.flt select,.flt input{width:100%;min-width:0}
@@ -150,6 +160,14 @@ tr.exp td{background:#FBFCFE}
   <h1 class="ptitle">AR Aging</h1>
   <p class="psub" id="asof">Loading…</p>
   <div id="banner"></div>
+
+  <div class="panel hidden" id="colPanel">
+    <h2 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">Monthly collections vs target
+      <select id="colMonth" aria-label="Month" style="font:600 13px var(--bf);height:30px;border:1px solid #CBD3E1;border-radius:6px;padding:0 8px;text-transform:none;letter-spacing:0"></select></h2>
+    <div id="colSum"></div>
+    <div class="scroll"><table id="colTable"></table></div>
+    <p class="foot" id="colFoot" style="padding:0 14px 12px"></p>
+  </div>
 
   <div class="bar">
     <div class="seg" id="modeSeg" role="group" aria-label="View">
@@ -304,6 +322,7 @@ async function load(){
   } catch(_) { NOTES = new Map(); }
 
   await loadLog();
+  await loadSummary();
 }
 
 async function loadLog(){
@@ -553,7 +572,59 @@ function drawCustomers(scoped){
     (list.length > LIMIT ? '<div class="empty"><button class="btn ghost" id="moreBtn">Show ' + Math.min(200, list.length - LIMIT) + ' more (' + (list.length - LIMIT) + ' left)</button></div>' : '');
 }
 
+// ---------- monthly collections vs target ----------
+// Targets are frozen in Postgres (ar_month_targets) at the start of each month; ar_month_summary adds the cash
+// applied in the month by payment date. Rules: target = open balance of invoices due by month end (incl. overdue
+// carry-over) net of open credits; actual = all cash received in the month, early payments included; credits and
+// write-offs after the freeze lower the target. USD customers stay in USD; the company total converts at the month's frozen rate.
+let SUMMARY = [], COLMONTH = '';
+async function loadSummary(){
+  try {
+    SUMMARY = (await pageAll(() => sb.from('ar_month_summary').select('*').order('month', { ascending:false }).order('rep_code').order('currency')))
+      .map(r => Object.assign(r, { target:+r.target, credit_adj:+r.credit_adj, wo_adj:+r.wo_adj, adjusted_target:+r.adjusted_target,
+        actual_targeted:+r.actual_targeted, actual_other:+r.actual_other, actual_total:+r.actual_total, rate:+r.rate || 1 }));
+  } catch(e){ console.error(e); SUMMARY = []; }
+}
+const monthLabel = m => new Date(m + 'T00:00:00').toLocaleDateString('en-GB', { month:'long', year:'numeric' });
+const pctOf = (a, t) => t > 0 ? a / t * 100 : null;
+function pctHtml(a, t){ const p = pctOf(a, t); return p == null ? '—' : '<span class="pct ' + (p >= 100 ? 'ok' : p < 50 ? 'low' : '') + '">' + p.toFixed(1) + '%</span>'; }
+function renderCollections(){
+  const panel = $('colPanel');
+  const months = [...new Set(SUMMARY.map(r => r.month))];
+  if(!months.length){ panel.classList.add('hidden'); return; }
+  panel.classList.remove('hidden');
+  if(!COLMONTH || !months.includes(COLMONTH)) COLMONTH = months[0];
+  $('colMonth').innerHTML = months.map(m => '<option value="' + m + '"' + (m === COLMONTH ? ' selected' : '') + '>' + esc(monthLabel(m)) + '</option>').join('');
+  const rows = SUMMARY.filter(r => r.month === COLMONTH && (!ALL_MODE || !REP_FILTER || (REP_FILTER === UNASSIGNED ? !r.rep_code : r.rep_code === REP_FILTER)));
+  const sum = cur => { const rs = rows.filter(r => !cur || r.currency === cur); const k = cur ? 1 : null;
+    const f = x => rs.reduce((s, r) => s + x(r) * (cur ? 1 : r.rate), 0);
+    return { t:f(r => r.adjusted_target), a:f(r => r.actual_total), at:f(r => r.actual_targeted), ao:f(r => r.actual_other), n:rs.length }; };
+  const card = (label, s, unit) => '<div class="colcard"><div class="l">' + label + '</div><div class="v">' + unit + fmt0(s.a) + ' <small style="font-weight:600;color:var(--ink2)">of ' + unit + fmt0(s.t) + '</small></div>' +
+    '<div class="pbar"><i class="' + (s.t > 0 && s.a >= s.t ? 'ok' : '') + '" style="width:' + Math.min(100, s.t > 0 ? s.a / s.t * 100 : 0).toFixed(1) + '%"></i></div>' +
+    '<div class="s">' + pctHtml(s.a, s.t) + ' collected · ' + (s.a >= s.t ? 'ahead by ' : 'gap ') + unit + fmt0(Math.abs(s.t - s.a)) + '</div></div>';
+  const jmd = sum('JMD'), usd = sum('USD'), all = sum(null);
+  $('colSum').innerHTML = '<div class="colsum">' + card('JMD customers', jmd, 'J$') + (usd.n ? card('USD customers', usd, 'US$') : '') +
+    card('Company total (JMD equivalent)', all, 'J$') + '</div>';
+  // unapplied cash on account is a memo only (from the latest snapshot), never part of the actual
+  const unapplied = {};
+  for(const r of ROWS) if(r.doc_type === 'Payment') unapplied[r.rep_code || UNASSIGNED] = (unapplied[r.rep_code || UNASSIGNED] || 0) - r.balance_jmd;
+  const latest = COLMONTH === months[0];
+  const list = rows.filter(r => r.target || r.actual_total).sort((a, b) => b.adjusted_target * b.rate - a.adjusted_target * a.rate);
+  $('colTable').innerHTML = '<tr><th>Rep</th><th>Cur</th><th>Target</th><th class="hide-m">Credits / write-offs</th><th>Adj. target</th><th class="hide-m">On targeted invoices</th><th class="hide-m">Early / other</th><th>Collected</th><th>%</th><th class="hide-m">Gap</th>' +
+    (latest ? '<th class="hide-m">Unapplied (memo)</th>' : '') + '</tr>' +
+    list.map(r => { const u = r.currency === 'JMD' && latest ? unapplied[r.rep_code || UNASSIGNED] : null;
+      return '<tr><td><b>' + esc(r.rep_code || 'Unassigned') + '</b> <small style="color:var(--ink3)">' + esc(r.rep_name && r.rep_name !== r.rep_code ? r.rep_name : '') + '</small></td><td>' + esc(r.currency) + '</td>' +
+      '<td>' + fmt0(r.target) + '</td><td class="hide-m">' + (r.credit_adj + r.wo_adj ? '-' + fmt0(r.credit_adj + r.wo_adj) : '') + '</td><td><b>' + fmt0(r.adjusted_target) + '</b></td>' +
+      '<td class="hide-m">' + fmt0(r.actual_targeted) + '</td><td class="hide-m">' + fmt0(r.actual_other) + '</td><td><b>' + fmt0(r.actual_total) + '</b></td><td>' + pctHtml(r.actual_total, r.adjusted_target) + '</td>' +
+      '<td class="hide-m ' + (r.adjusted_target - r.actual_total <= 0 ? 'neg' : '') + '">' + fmt0(r.adjusted_target - r.actual_total) + '</td>' +
+      (latest ? '<td class="hide-m">' + (u ? fmt0(u) : '') + '</td>' : '') + '</tr>'; }).join('') || '<tr><td colspan="11" class="empty">No targets for this month.</td></tr>';
+  const rec = rows.some(r => r.reconstructed);
+  $('colFoot').textContent = 'Target = open balance of invoices due by month end (overdue carry-over included) net of open credits, frozen at the start of the month. Collected = all cash received in the month, early payments included, voids deducted. Credit memos and write-offs after the freeze lower the target. USD customers are in USD; the company total converts at the month\'s frozen rate.' +
+    (rec ? ' Some invoices paid early in the month were rebuilt from payment history (due date estimated from customer terms).' : '') + ' Unapplied cash on account is a memo, not part of the collected figure.';
+}
+
 function renderAll(){
+  renderCollections();
   const g = compute();
   document.querySelectorAll('#modeSeg button').forEach(b => b.classList.toggle('on', b.dataset.mode === MODE));
   $('sortSel').parentElement.classList.toggle('hidden', MODE === 'cust');
@@ -879,6 +950,7 @@ $('modeSeg').addEventListener('click', e => {
   renderAll();
 });
 $('viewSel').addEventListener('change', refilter);
+$('colMonth').addEventListener('change', () => { COLMONTH = $('colMonth').value; renderCollections(); });
 $('dlBtn').addEventListener('click', download);
 $('pdfBtn').addEventListener('click', downloadPdf);
 $('lgCancel').addEventListener('click', () => $('logModal').classList.add('hidden'));
