@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0D1B3E">
+<title>DFL · AR Collections</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&family=Open+Sans:wght@400;600&display=swap" rel="stylesheet">
+<!--
+  AR Collections — monthly collections vs target, by rep. Standalone page next to AR Aging (own Supabase
+  client, same Microsoft sign-in and same storage key, so signing in on one signs you in on the other).
+  Access is decided in Postgres by ar_my_access() (admins + the ar_access list); reps do not use this portal.
+
+  Data:
+    ar_month_targets  frozen at the start of each month by ar_freeze_month() (daily cron, first snapshot of the month)
+    ar_month_summary  view: target, credit/write-off adjustments, cash collected in the month, per rep and currency
+    ar_aging_rows     only for the "unapplied cash" memo (Payment documents on the latest snapshot)
+
+  Rules:
+    - target  = open balance of invoices due by month end (overdue carry-over included), net of open credits,
+                frozen at the start of the month
+    - actual  = all cash received in the month by payment date, early payments included, voids deducted
+    - credit memos and write-offs after the freeze lower the target; they are never counted as collected
+    - USD customers stay in USD; the company total converts USD at the month's frozen rate
+-->
+<style>
+:root{
+  --navy:#0D1B3E; --navy2:#1a2e5a; --blue:#326BD3; --blue-t:#E8EFFB;
+  --bg:#F5F7FA; --card:#FFFFFF; --line:#E1E6EF;
+  --ink:#1A2340; --ink2:#4A5578; --ink3:#8A95B0;
+  --green:#1A8F4C; --green-t:#E6F4EC; --red:#D63B3B; --red-t:#FBE9E9;
+  --hf:"Montserrat",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --bf:"Open Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--bf)}
+.hidden{display:none!important}
+.topbar{background:var(--navy);color:#fff;display:flex;align-items:center;gap:12px;padding:10px 16px}
+.topbar img{height:30px}.topbar #who{margin-left:auto;font-size:13px;color:#C9D4EE}
+.btn{font:700 12px var(--hf);letter-spacing:.04em;background:var(--blue);color:#fff;border:0;border-radius:6px;height:40px;padding:0 16px;cursor:pointer}
+.btn.ghost{background:#fff;color:var(--blue);border:1px solid var(--blue)}
+.btn.small{height:32px;padding:0 12px;font-size:11px;background:transparent;color:#fff;border:1px solid #6F82B3}
+.tabs{background:var(--navy2);display:flex;gap:2px;padding:0 16px}
+.tabs a{color:#C9D4EE;text-decoration:none;font:700 12px var(--hf);letter-spacing:.04em;padding:10px 16px;border-bottom:3px solid transparent}
+.tabs a:hover{color:#fff}.tabs a.on{color:#fff;border-bottom-color:#F2D64B}
+.gate{max-width:420px;margin:70px auto;background:#fff;border:1px solid var(--line);border-radius:10px;padding:28px;text-align:center}
+.gate h2{font:800 20px var(--hf);margin:0 0 8px}.gate p{color:var(--ink2);margin:0 0 18px}
+.gate .ms{display:inline-flex;align-items:center;gap:10px;width:auto;padding:0 18px}
+:root{--hdr:92px;--pin:0px}
+.hdr{position:sticky;top:0;z-index:40}
+/* Desktop: month and rep pickers stay pinned under the header; table headings pin under them. */
+@media (min-width:901px){
+  .pin{position:sticky;top:var(--hdr);z-index:30;background:var(--bg);padding-top:6px}
+  .page .panel{overflow:visible}.page .scroll{overflow-x:visible}
+  #repTable th{position:sticky;top:calc(var(--hdr) + var(--pin));z-index:20}
+}
+.page{max-width:1680px;margin:0 auto;padding:20px 16px 70px}
+.ptitle{font:800 22px var(--hf);margin:0 0 2px}
+.psub{color:var(--ink2);margin:0 0 14px;font-size:13px}
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}
+.bar select,.bar input{font:14px var(--bf);color:var(--ink);background:#fff;border:1px solid #CBD3E1;border-radius:6px;padding:0 10px;height:40px}
+.bar input{flex:1;min-width:160px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:8px;margin-bottom:16px;overflow:hidden}
+.panel h2{font:700 12px var(--hf);text-transform:uppercase;letter-spacing:.08em;color:var(--ink2);margin:0;padding:12px 14px;border-bottom:1px solid var(--line)}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th{font:700 10.5px var(--hf);text-transform:uppercase;letter-spacing:.06em;color:var(--ink2);text-align:right;padding:8px 10px;background:#F0F3F8;white-space:nowrap}
+td{padding:8px 10px;text-align:right;border-top:1px solid var(--line);white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th.sortable{cursor:pointer;user-select:none}th.sortable:hover{color:var(--blue)}
+.neg{color:var(--green)}
+.empty{padding:30px;text-align:center;color:var(--ink3)}
+.foot{color:var(--ink3);font-size:12px;margin:6px 0 0}
+.colsum{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:16px}
+.colcard{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;min-width:0}
+.colcard .l{font:600 10px var(--hf);text-transform:uppercase;letter-spacing:.09em;color:var(--ink2)}
+.colcard .v{font:700 18px var(--hf);font-variant-numeric:tabular-nums}
+.colcard .v small{font-weight:600;font-size:13px;color:var(--ink2)}
+.colcard .s{font-size:12px;color:var(--ink2)}
+.pbar{height:8px;background:#E8ECF4;border-radius:4px;overflow:hidden;margin:6px 0 4px}
+.pbar i{display:block;height:100%;background:var(--blue)}
+.pbar i.ok{background:var(--green)}
+.pct{font-weight:700}.pct.ok{color:var(--green)}.pct.low{color:#B4540A}
+@media (max-width:900px){.colsum{grid-template-columns:1fr}}
+@media (max-width:640px){
+  .page{padding:14px 12px 70px}
+  .bar select{width:100%;flex:1 1 100%}
+  td,th{padding:7px 8px}
+  .hide-m{display:none}
+}
+</style>
+</head>
+<body>
+<header class="hdr">
+<div class="topbar"><img src="https://hzagwndglwhcepsirafi.supabase.co/storage/v1/object/public/Assets/DFL%20Logo%20Blue_White.png" alt="DFL Importers"><span id="who"></span><button class="btn ghost small hidden" id="signout">Sign out</button></div>
+<nav class="tabs" aria-label="AR sections"><a href="index.html">Aging</a><a class="on" href="collections.html">Collections</a></nav>
+</header>
+<div class="gate hidden" id="gate"></div>
+<div class="page hidden" id="app">
+  <h1 class="ptitle">AR Collections</h1>
+  <p class="psub" id="asof">Loading…</p>
+
+  <div class="pin">
+    <div class="bar">
+      <select id="monthSel" aria-label="Month"></select>
+      <input id="repSel" list="repList" placeholder="All reps — type or pick" autocomplete="off" aria-label="Sales rep">
+      <datalist id="repList"></datalist>
+    </div>
+    <div class="colsum" id="cards"></div>
+  </div>
+
+  <div class="panel">
+    <h2>By sales rep</h2>
+    <div class="scroll"><table id="repTable"></table></div>
+  </div>
+  <p class="foot" id="foot"></p>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+(function(){
+"use strict";
+const UNASSIGNED = '__none__';
+const $ = id => document.getElementById(id);
+// Named sb, never supabase: the CDN script defines supabase as the library. Same storage key as AR Aging so one sign-in covers both pages.
+const sb = supabase.createClient('https://hzagwndglwhcepsirafi.supabase.co', 'sb_publishable_5rAinfDT1K9kwEQnqYwlOA_-C5tk_6h', {
+  auth: { persistSession:true, autoRefreshToken:true, detectSessionInUrl:true, flowType:'pkce', storageKey:'dfl-ar-aging-auth' }
+});
+const fmt0 = n => (n < 0 ? '-' : '') + Math.abs(Math.round(n)).toLocaleString('en-US');
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const monthLabel = m => new Date(m + 'T00:00:00').toLocaleDateString('en-GB', { month:'long', year:'numeric' });
+
+async function pageAll(build){
+  const out = []; let from = 0;
+  for(;;){
+    const { data, error } = await build().range(from, from + 999);
+    if(error) throw error;
+    out.push(...data);
+    if(data.length < 1000) break;
+    from += 1000;
+  }
+  return out;
+}
+
+let SUMMARY = [], UNAPPLIED = {}, SNAP = null, MONTH = '', REP = '';
+let SORT = { key:'target', dir:-1 };
+const REP_OPTS = [];
+
+async function load(){
+  SUMMARY = (await pageAll(() => sb.from('ar_month_summary').select('*').order('month', { ascending:false }).order('rep_code').order('currency')))
+    .map(r => Object.assign(r, { target:+r.target, credit_adj:+r.credit_adj, wo_adj:+r.wo_adj, adjusted_target:+r.adjusted_target,
+      actual_targeted:+r.actual_targeted, actual_other:+r.actual_other, actual_total:+r.actual_total, rate:+r.rate || 1 }));
+  // memo only: cash received but not yet applied to an invoice, from the latest AR snapshot
+  try {
+    const { data: snaps } = await sb.from('ar_aging_snapshots').select('id,snapshot_date').eq('status','complete').order('id',{ascending:false}).limit(1);
+    SNAP = snaps && snaps[0] || null;
+    UNAPPLIED = {};
+    if(SNAP){
+      const rows = await pageAll(() => sb.from('ar_aging_rows').select('rep_code,balance_jmd').eq('snapshot_id', SNAP.id).eq('doc_type','Payment').order('ref_nbr'));
+      for(const r of rows){ const k = r.rep_code || UNASSIGNED; UNAPPLIED[k] = (UNAPPLIED[k] || 0) - (Number(r.balance_jmd) || 0); }
+    }
+  } catch(e){ console.error(e); UNAPPLIED = {}; }
+}
+
+const pctOf = (a, t) => t > 0 ? a / t * 100 : null;
+const pctHtml = (a, t) => { const p = pctOf(a, t); return p == null ? '—' : '<span class="pct ' + (p >= 100 ? 'ok' : p < 50 ? 'low' : '') + '">' + p.toFixed(1) + '%</span>'; };
+
+function render(){
+  const months = [...new Set(SUMMARY.map(r => r.month))];
+  if(!months.length){ $('cards').innerHTML = ''; $('repTable').innerHTML = '<tr><td class="empty">No targets have been frozen yet.</td></tr>'; return; }
+  if(!MONTH || !months.includes(MONTH)) MONTH = months[0];
+  $('monthSel').innerHTML = months.map(m => '<option value="' + m + '"' + (m === MONTH ? ' selected' : '') + '>' + esc(monthLabel(m)) + '</option>').join('');
+  const rows = SUMMARY.filter(r => r.month === MONTH && (!REP || (REP === UNASSIGNED ? !r.rep_code : r.rep_code === REP)));
+
+  const sum = cur => {
+    const rs = rows.filter(r => !cur || r.currency === cur), f = x => rs.reduce((s, r) => s + x(r) * (cur ? 1 : r.rate), 0);
+    return { t:f(r => r.adjusted_target), a:f(r => r.actual_total), n:rs.length };
+  };
+  const card = (label, s, unit) => '<div class="colcard"><div class="l">' + label + '</div><div class="v">' + unit + fmt0(s.a) + ' <small>of ' + unit + fmt0(s.t) + '</small></div>' +
+    '<div class="pbar"><i class="' + (s.t > 0 && s.a >= s.t ? 'ok' : '') + '" style="width:' + Math.min(100, s.t > 0 ? s.a / s.t * 100 : 0).toFixed(1) + '%"></i></div>' +
+    '<div class="s">' + pctHtml(s.a, s.t) + ' collected · ' + (s.a >= s.t ? 'ahead by ' : 'gap ') + unit + fmt0(Math.abs(s.t - s.a)) + '</div></div>';
+  const jmd = sum('JMD'), usd = sum('USD'), all = sum(null);
+  $('cards').innerHTML = card('JMD customers', jmd, 'J$') + card('USD customers', usd, 'US$') + card('Company total (JMD equivalent)', all, 'J$');
+
+  const latest = MONTH === months[0];
+  const acc = { rep: r => (r.rep_code || '~').toLowerCase(), target: r => r.target * r.rate, adj: r => r.adjusted_target * r.rate, actual: r => r.actual_total * r.rate,
+    pct: r => r.adjusted_target > 0 ? r.actual_total / r.adjusted_target : -1, gap: r => (r.adjusted_target - r.actual_total) * r.rate };
+  const list = rows.filter(r => r.target || r.actual_total).sort((a, b) => {
+    const f = acc[SORT.key] || acc.target, x = f(a), y = f(b), c = typeof x === 'string' ? x.localeCompare(y) : x - y;
+    return c ? c * SORT.dir : String(a.rep_code).localeCompare(String(b.rep_code));
+  });
+  const th = (key, label, cls) => '<th class="sortable ' + (cls || '') + '" data-sort="' + key + '">' + label + (SORT.key === key ? (SORT.dir < 0 ? ' ▼' : ' ▲') : '') + '</th>';
+  $('repTable').innerHTML = '<tr>' + th('rep', 'Rep') + '<th>Cur</th>' + th('target', 'Target') + '<th class="hide-m">Credits / write-offs</th>' + th('adj', 'Adj. target') +
+    '<th class="hide-m">On targeted invoices</th><th class="hide-m">Early / other</th>' + th('actual', 'Collected') + th('pct', '%') + th('gap', 'Gap', 'hide-m') +
+    (latest ? '<th class="hide-m">Unapplied (memo)</th>' : '') + '</tr>' +
+    (list.map(r => {
+      const u = r.currency === 'JMD' && latest ? UNAPPLIED[r.rep_code || UNASSIGNED] : null;
+      return '<tr><td><b>' + esc(r.rep_code || 'Unassigned') + '</b> <small style="color:var(--ink3)">' + esc(r.rep_name && r.rep_name !== r.rep_code ? r.rep_name : '') + '</small></td><td>' + esc(r.currency) + '</td>' +
+        '<td>' + fmt0(r.target) + '</td><td class="hide-m">' + (r.credit_adj + r.wo_adj ? '-' + fmt0(r.credit_adj + r.wo_adj) : '') + '</td><td><b>' + fmt0(r.adjusted_target) + '</b></td>' +
+        '<td class="hide-m">' + fmt0(r.actual_targeted) + '</td><td class="hide-m">' + fmt0(r.actual_other) + '</td><td><b>' + fmt0(r.actual_total) + '</b></td><td>' + pctHtml(r.actual_total, r.adjusted_target) + '</td>' +
+        '<td class="hide-m ' + (r.adjusted_target - r.actual_total <= 0 ? 'neg' : '') + '">' + fmt0(r.adjusted_target - r.actual_total) + '</td>' +
+        (latest ? '<td class="hide-m">' + (u ? fmt0(u) : '') + '</td>' : '') + '</tr>';
+    }).join('') || '<tr><td colspan="11" class="empty">No targets for this selection.</td></tr>');
+
+  const rec = rows.some(r => r.reconstructed);
+  $('foot').textContent = 'Target = open balance of invoices due by month end (overdue carry-over included) net of open credits, frozen at the start of the month. Collected = all cash received in the month, early payments included, voids deducted. ' +
+    'Credit memos and write-offs after the freeze lower the target. USD customers are in USD; the company total converts at the month\'s frozen rate.' +
+    (rec ? ' Some invoices paid early in the month were rebuilt from payment history (due date estimated from customer terms).' : '') +
+    ' Unapplied cash on account is a memo, not part of the collected figure.';
+  pinVars();
+}
+
+function setupRepSelect(){
+  const seen = new Map();
+  for(const r of SUMMARY){ const k = r.rep_code || UNASSIGNED; if(!seen.get(k)) seen.set(k, r.rep_name || ''); }
+  const keys = [...seen.keys()].sort((a, b) => (a === UNASSIGNED) - (b === UNASSIGNED) || a.localeCompare(b));
+  REP_OPTS.length = 0;
+  for(const k of keys) REP_OPTS.push({ key:k, label: k === UNASSIGNED ? 'Unassigned (no rep)' : k + (seen.get(k) ? ' — ' + seen.get(k) : '') });
+  $('repList').innerHTML = REP_OPTS.map(o => '<option value="' + esc(o.label) + '"></option>').join('');
+  const labelFor = key => { const o = REP_OPTS.find(x => x.key === key); return o ? o.label : ''; };
+  const sel = $('repSel');
+  sel.addEventListener('focus', () => sel.select());
+  sel.addEventListener('change', () => {
+    const v = sel.value.trim().toLowerCase();
+    let key = '';
+    if(v){
+      const exact = REP_OPTS.find(o => o.label.toLowerCase() === v || o.key.toLowerCase() === v);
+      const part = REP_OPTS.filter(o => o.label.toLowerCase().includes(v));
+      const hit = exact || (part.length === 1 ? part[0] : null);
+      if(!hit){ sel.value = labelFor(REP); return; }
+      key = hit.key;
+    }
+    REP = key; sel.value = labelFor(key); render();
+  });
+}
+
+// Measures the pinned header and pickers so the table headings can stick right under them.
+function pinVars(){
+  const h = document.querySelector('.hdr'), p = document.querySelector('.pin');
+  const root = document.documentElement.style;
+  root.setProperty('--hdr', (h ? h.offsetHeight : 0) + 'px');
+  root.setProperty('--pin', (p && getComputedStyle(p).position === 'sticky' ? p.offsetHeight : 0) + 'px');
+}
+if(window.ResizeObserver){ const ro = new ResizeObserver(pinVars); ['.hdr', '.pin'].forEach(s => { const e = document.querySelector(s); if(e) ro.observe(e); }); }
+window.addEventListener('resize', pinVars);
+
+async function init(){
+  pinVars();
+  try { await load(); }
+  catch(e){ console.error(e); $('asof').textContent = ''; $('repTable').innerHTML = '<tr><td class="empty">Could not load collections data. Please refresh, or tell IT Support if it keeps happening.</td></tr>'; return; }
+  $('asof').textContent = SNAP ? 'Payments to date · unapplied cash as of the ' + SNAP.snapshot_date + ' AR snapshot' : 'Payments to date';
+  setupRepSelect(); render();
+}
+
+$('monthSel').addEventListener('change', () => { MONTH = $('monthSel').value; render(); });
+$('repTable').addEventListener('click', e => {
+  const h = e.target.closest('th[data-sort]'); if(!h) return;
+  const k = h.dataset.sort; SORT.dir = SORT.key === k ? -SORT.dir : (k === 'rep' ? 1 : -1); SORT.key = k; render();
+});
+
+const MS_LOGO = '<svg width="18" height="18" viewBox="0 0 21 21" aria-hidden="true"><path fill="#f25022" d="M1 1h9v9H1z"/><path fill="#7fba00" d="M11 1h9v9h-9z"/><path fill="#00a4ef" d="M1 11h9v9H1z"/><path fill="#ffb900" d="M11 11h9v9h-9z"/></svg>';
+function gate(html){ $('app').classList.add('hidden'); $('gate').classList.remove('hidden'); $('gate').innerHTML = html; }
+async function signIn(){
+  const { error } = await sb.auth.signInWithOAuth({ provider:'azure', options:{ scopes:'email openid profile', redirectTo: location.origin + location.pathname } });
+  if(error) alert("Couldn't start sign-in: " + error.message);
+}
+async function signOut(){ await sb.auth.signOut(); location.reload(); }
+$('signout').addEventListener('click', signOut);
+
+async function start(){
+  const { data:{ session } } = await sb.auth.getSession();
+  if(!session){
+    gate('<h2>AR Collections</h2><p>Sign in with your DFL Microsoft account.</p><button class="btn ms" id="signin">' + MS_LOGO + 'Sign in with Microsoft</button>');
+    $('signin').addEventListener('click', signIn); return;
+  }
+  $('signout').classList.remove('hidden'); $('who').textContent = session.user.email || '';
+  const { data: access, error } = await sb.rpc('ar_my_access');
+  if(error || !access || !access.level){
+    gate('<h2>No access</h2><p>You are signed in as <b>' + esc(session.user.email) + '</b>, but this account is not set up for AR. Ask IT Support to add you.</p><button class="btn" id="so">Sign out</button>');
+    $('so').addEventListener('click', signOut); return;
+  }
+  $('who').textContent = (access.name || session.user.email) + ' · ' + access.level.replace('_', ' ');
+  $('gate').classList.add('hidden'); $('app').classList.remove('hidden');
+  init();
+}
+start();
+})();
+</script>
+</body>
+</html>

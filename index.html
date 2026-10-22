@@ -42,10 +42,22 @@ body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--bf)}
 .topbar{background:var(--navy);color:#fff;display:flex;align-items:center;gap:12px;padding:10px 16px}
 .topbar img{height:30px}.topbar #who{margin-left:auto;font-size:13px;color:#C9D4EE}
 .btn.small{height:32px;padding:0 12px;font-size:11px;background:transparent;color:#fff;border:1px solid #6F82B3}
+:root{--hdr:92px;--pin:0px}
+.hdr{position:sticky;top:0;z-index:40}
+/* Desktop: the toolbar, filters and tiles stay pinned under the header; table headings pin under them.
+   --hdr and --pin are measured by pinVars() so the offsets follow the real heights. */
+@media (min-width:901px){
+  .pin{position:sticky;top:var(--hdr);z-index:30;background:var(--bg);padding-top:6px}
+  .page .panel{overflow:visible}.page .scroll{overflow-x:visible}
+  #repTable th,.ctable th{position:sticky;top:calc(var(--hdr) + var(--pin));z-index:20}
+}
+.tabs{background:var(--navy2);display:flex;gap:2px;padding:0 16px}
+.tabs a{color:#C9D4EE;text-decoration:none;font:700 12px var(--hf);letter-spacing:.04em;padding:10px 16px;border-bottom:3px solid transparent}
+.tabs a:hover{color:#fff}.tabs a.on{color:#fff;border-bottom-color:#F2D64B}
 .gate{max-width:420px;margin:70px auto;background:#fff;border:1px solid var(--line);border-radius:10px;padding:28px;text-align:center}
 .gate h2{font:800 20px var(--hf);margin:0 0 8px}.gate p{color:var(--ink2);margin:0 0 18px}
 .gate .ms{display:inline-flex;align-items:center;gap:10px;width:auto;padding:0 18px}
-.page{max-width:1120px;margin:0 auto;padding:20px 16px 70px}
+.page{max-width:1680px;margin:0 auto;padding:20px 16px 70px}
 .ptitle{font:800 22px var(--hf);margin:0 0 2px}
 .psub{color:var(--ink2);margin:0 0 14px;font-size:13px}
 .banner{border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px}
@@ -129,20 +141,10 @@ tr.exp td{background:#FBFCFE}
 .fgrid input,.fgrid select{height:38px;border:1px solid #CBD3E1;border-radius:6px;padding:0 9px;font:14px var(--bf);width:100%;background:#fff}
 .mbox.wide{max-width:520px;max-height:92vh;overflow:auto}
 .ferr{color:#8a1f1f;font-size:12.5px;min-height:18px;margin-top:6px}
-.colsum{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;padding:12px 14px}
-.colcard{border:1px solid var(--line);border-radius:8px;padding:10px 12px;min-width:0}
-.colcard .l{font:600 10px var(--hf);text-transform:uppercase;letter-spacing:.09em;color:var(--ink2)}
-.colcard .v{font:700 17px var(--hf);font-variant-numeric:tabular-nums}
-.colcard .s{font-size:12px;color:var(--ink2)}
-.pbar{height:8px;background:#E8ECF4;border-radius:4px;overflow:hidden;margin:6px 0 4px}
-.pbar i{display:block;height:100%;background:var(--blue)}
-.pbar i.ok{background:var(--green)}
-.pct{font-weight:700}.pct.ok{color:var(--green)}.pct.low{color:#B4540A}
 @media (max-width:900px){.strip{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media (max-width:640px){
   .page{padding:14px 12px 70px}
   .strip{grid-template-columns:repeat(2,minmax(0,1fr))}
-  .colsum{grid-template-columns:1fr}
   .cnum.hide-m{display:none}
   .bar select,.bar input,.bar #repSel,.btn{width:100%;flex:1 1 100%}
   .flt{flex:1 1 45%}.flt select,.flt input{width:100%;min-width:0}
@@ -154,21 +156,17 @@ tr.exp td{background:#FBFCFE}
 </style>
 </head>
 <body>
+<header class="hdr">
 <div class="topbar"><img src="https://hzagwndglwhcepsirafi.supabase.co/storage/v1/object/public/Assets/DFL%20Logo%20Blue_White.png" alt="DFL Importers"><span id="who"></span><button class="btn ghost small hidden" id="signout">Sign out</button></div>
+<nav class="tabs" aria-label="AR sections"><a class="on" href="index.html">Aging</a><a href="collections.html">Collections</a></nav>
+</header>
 <div class="gate hidden" id="gate"></div>
 <div class="page hidden" id="app">
   <h1 class="ptitle">AR Aging</h1>
   <p class="psub" id="asof">Loading…</p>
   <div id="banner"></div>
 
-  <div class="panel hidden" id="colPanel">
-    <h2 style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">Monthly collections vs target
-      <select id="colMonth" aria-label="Month" style="font:600 13px var(--bf);height:30px;border:1px solid #CBD3E1;border-radius:6px;padding:0 8px;text-transform:none;letter-spacing:0"></select></h2>
-    <div id="colSum"></div>
-    <div class="scroll"><table id="colTable"></table></div>
-    <p class="foot" id="colFoot" style="padding:0 14px 12px"></p>
-  </div>
-
+  <div class="pin">
   <div class="bar">
     <div class="seg" id="modeSeg" role="group" aria-label="View">
       <button data-mode="rep" class="on">By rep</button><button data-mode="cust">By customer</button>
@@ -192,6 +190,7 @@ tr.exp td{background:#FBFCFE}
   </div>
 
   <div class="strip" id="kpis"></div>
+  </div>
 
   <div class="panel hidden" id="repPanel">
     <h2>By sales rep <span style="font-weight:400;text-transform:none;letter-spacing:0">— tap a row to filter</span></h2>
@@ -277,8 +276,16 @@ const keyOf = r => r.doc_type + '|' + r.ref_nbr;
 const repLabel = r => r.rep_code ? r.rep_code : 'Unassigned';
 const when = iso => new Date(iso).toLocaleString('en-GB', { timeZone:'America/Jamaica', weekday:'short', day:'numeric', month:'short', hour:'numeric', minute:'2-digit', hour12:true });
 
-async function pageAll(build){
+async function pageAll(build, expected){
+  // With a row count the pages are fetched together instead of one after another; a full last page falls through to the loop.
   const out = []; let from = 0;
+  if(expected > 1000){
+    const n = Math.ceil(expected / 1000);
+    const parts = await Promise.all(Array.from({ length:n }, (_, i) => build().range(i * 1000, i * 1000 + 999).then(({ data, error }) => { if(error) throw error; return data; })));
+    for(const p of parts) out.push(...p);
+    if(parts[n - 1].length < 1000) return out;
+    from = n * 1000;
+  }
   for(;;){
     const { data, error } = await build().range(from, from + 999);
     if(error) throw error;
@@ -289,6 +296,18 @@ async function pageAll(build){
   return out;
 }
 
+// Switching to the Collections tab and back used to refetch ~17 pages of rows. The rows of a snapshot never change, so the
+// last load is kept for this browser tab, keyed by user (RLS makes the rows per-user) and snapshot ids. Notes and the contact
+// log are small, change often, and are always fetched fresh.
+const CACHE_KEY = 'ar_aging_cache_v1';
+function cacheGet(uid, snapId, prevId){
+  try { const c = JSON.parse(sessionStorage.getItem(CACHE_KEY) || 'null'); if(c && c.uid === uid && c.snap === snapId && c.prev === prevId) return c; } catch(_) {}
+  return null;
+}
+function cachePut(obj){
+  try { sessionStorage.setItem(CACHE_KEY, JSON.stringify(obj)); } catch(_) { try { sessionStorage.removeItem(CACHE_KEY); } catch(__) {} }
+}
+
 async function load(){
   const { data: snaps, error } = await sb.from('ar_aging_snapshots')
     .select('id,snapshot_date,completed_at,row_count,total_jmd')
@@ -297,16 +316,20 @@ async function load(){
   if(!snaps.length){ SNAP = null; return; }
   SNAP = snaps[0]; PREV = snaps[1] || null;
 
-  ROWS = (await pageAll(() => sb.from('ar_aging_rows')
-    .select('doc_type,ref_nbr,rep_code,rep_name,customer_id,customer_name,doc_date,due_date,currency,amount_doc,balance_doc,balance_jmd,terms,is_credit,days_aged,bucket')
-    .eq('snapshot_id', SNAP.id).order('doc_type').order('ref_nbr')))
-    .map(r => Object.assign(r, { balance_jmd:Number(r.balance_jmd)||0, balance_doc:Number(r.balance_doc)||0, amount_doc:Number(r.amount_doc)||0 }));
-
-  PREV_AGG = { total:{}, cust:{}, byRep:{}, buckets:{} };
-  if(PREV){
-    const prev = await pageAll(() => sb.from('ar_aging_rows')
-      .select('doc_type,ref_nbr,rep_code,customer_id,bucket,balance_jmd')
-      .eq('snapshot_id', PREV.id).order('doc_type').order('ref_nbr'));
+  const cached = cacheGet(PROFILE.id, SNAP.id, PREV ? PREV.id : null);
+  if(cached){
+    ROWS = cached.rows; PREV_AGG = cached.prevAgg;
+  } else {
+    const [rows, prev] = await Promise.all([
+      pageAll(() => sb.from('ar_aging_rows')
+        .select('doc_type,ref_nbr,rep_code,rep_name,customer_id,customer_name,doc_date,due_date,currency,amount_doc,balance_doc,balance_jmd,terms,is_credit,days_aged,bucket')
+        .eq('snapshot_id', SNAP.id).order('doc_type').order('ref_nbr'), SNAP.row_count),
+      PREV ? pageAll(() => sb.from('ar_aging_rows')
+        .select('doc_type,ref_nbr,rep_code,customer_id,bucket,balance_jmd')
+        .eq('snapshot_id', PREV.id).order('doc_type').order('ref_nbr'), PREV.row_count) : Promise.resolve([])
+    ]);
+    ROWS = rows.map(r => Object.assign(r, { balance_jmd:Number(r.balance_jmd)||0, balance_doc:Number(r.balance_doc)||0, amount_doc:Number(r.amount_doc)||0 }));
+    PREV_AGG = { total:{}, cust:{}, byRep:{}, buckets:{} };
     for(const r of prev){
       const v = Number(r.balance_jmd) || 0, rep = r.rep_code || UNASSIGNED;
       PREV_AGG.cust[rep + '|' + r.customer_id] = (PREV_AGG.cust[rep + '|' + r.customer_id] || 0) + v;
@@ -314,6 +337,7 @@ async function load(){
       const b = PREV_AGG.buckets[rep] || (PREV_AGG.buckets[rep] = {});
       b[r.bucket] = (b[r.bucket] || 0) + v;
     }
+    cachePut({ uid: PROFILE.id, snap: SNAP.id, prev: PREV ? PREV.id : null, rows: ROWS, prevAgg: PREV_AGG });
   }
 
   try {
@@ -322,7 +346,6 @@ async function load(){
   } catch(_) { NOTES = new Map(); }
 
   await loadLog();
-  await loadSummary();
 }
 
 async function loadLog(){
@@ -572,65 +595,14 @@ function drawCustomers(scoped){
     (list.length > LIMIT ? '<div class="empty"><button class="btn ghost" id="moreBtn">Show ' + Math.min(200, list.length - LIMIT) + ' more (' + (list.length - LIMIT) + ' left)</button></div>' : '');
 }
 
-// ---------- monthly collections vs target ----------
-// Targets are frozen in Postgres (ar_month_targets) at the start of each month; ar_month_summary adds the cash
-// applied in the month by payment date. Rules: target = open balance of invoices due by month end (incl. overdue
-// carry-over) net of open credits; actual = all cash received in the month, early payments included; credits and
-// write-offs after the freeze lower the target. USD customers stay in USD; the company total converts at the month's frozen rate.
-let SUMMARY = [], COLMONTH = '';
-async function loadSummary(){
-  try {
-    SUMMARY = (await pageAll(() => sb.from('ar_month_summary').select('*').order('month', { ascending:false }).order('rep_code').order('currency')))
-      .map(r => Object.assign(r, { target:+r.target, credit_adj:+r.credit_adj, wo_adj:+r.wo_adj, adjusted_target:+r.adjusted_target,
-        actual_targeted:+r.actual_targeted, actual_other:+r.actual_other, actual_total:+r.actual_total, rate:+r.rate || 1 }));
-  } catch(e){ console.error(e); SUMMARY = []; }
-}
-const monthLabel = m => new Date(m + 'T00:00:00').toLocaleDateString('en-GB', { month:'long', year:'numeric' });
-const pctOf = (a, t) => t > 0 ? a / t * 100 : null;
-function pctHtml(a, t){ const p = pctOf(a, t); return p == null ? '—' : '<span class="pct ' + (p >= 100 ? 'ok' : p < 50 ? 'low' : '') + '">' + p.toFixed(1) + '%</span>'; }
-function renderCollections(){
-  const panel = $('colPanel');
-  const months = [...new Set(SUMMARY.map(r => r.month))];
-  if(!months.length){ panel.classList.add('hidden'); return; }
-  panel.classList.remove('hidden');
-  if(!COLMONTH || !months.includes(COLMONTH)) COLMONTH = months[0];
-  $('colMonth').innerHTML = months.map(m => '<option value="' + m + '"' + (m === COLMONTH ? ' selected' : '') + '>' + esc(monthLabel(m)) + '</option>').join('');
-  const rows = SUMMARY.filter(r => r.month === COLMONTH && (!ALL_MODE || !REP_FILTER || (REP_FILTER === UNASSIGNED ? !r.rep_code : r.rep_code === REP_FILTER)));
-  const sum = cur => { const rs = rows.filter(r => !cur || r.currency === cur); const k = cur ? 1 : null;
-    const f = x => rs.reduce((s, r) => s + x(r) * (cur ? 1 : r.rate), 0);
-    return { t:f(r => r.adjusted_target), a:f(r => r.actual_total), at:f(r => r.actual_targeted), ao:f(r => r.actual_other), n:rs.length }; };
-  const card = (label, s, unit) => '<div class="colcard"><div class="l">' + label + '</div><div class="v">' + unit + fmt0(s.a) + ' <small style="font-weight:600;color:var(--ink2)">of ' + unit + fmt0(s.t) + '</small></div>' +
-    '<div class="pbar"><i class="' + (s.t > 0 && s.a >= s.t ? 'ok' : '') + '" style="width:' + Math.min(100, s.t > 0 ? s.a / s.t * 100 : 0).toFixed(1) + '%"></i></div>' +
-    '<div class="s">' + pctHtml(s.a, s.t) + ' collected · ' + (s.a >= s.t ? 'ahead by ' : 'gap ') + unit + fmt0(Math.abs(s.t - s.a)) + '</div></div>';
-  const jmd = sum('JMD'), usd = sum('USD'), all = sum(null);
-  $('colSum').innerHTML = '<div class="colsum">' + card('JMD customers', jmd, 'J$') + (usd.n ? card('USD customers', usd, 'US$') : '') +
-    card('Company total (JMD equivalent)', all, 'J$') + '</div>';
-  // unapplied cash on account is a memo only (from the latest snapshot), never part of the actual
-  const unapplied = {};
-  for(const r of ROWS) if(r.doc_type === 'Payment') unapplied[r.rep_code || UNASSIGNED] = (unapplied[r.rep_code || UNASSIGNED] || 0) - r.balance_jmd;
-  const latest = COLMONTH === months[0];
-  const list = rows.filter(r => r.target || r.actual_total).sort((a, b) => b.adjusted_target * b.rate - a.adjusted_target * a.rate);
-  $('colTable').innerHTML = '<tr><th>Rep</th><th>Cur</th><th>Target</th><th class="hide-m">Credits / write-offs</th><th>Adj. target</th><th class="hide-m">On targeted invoices</th><th class="hide-m">Early / other</th><th>Collected</th><th>%</th><th class="hide-m">Gap</th>' +
-    (latest ? '<th class="hide-m">Unapplied (memo)</th>' : '') + '</tr>' +
-    list.map(r => { const u = r.currency === 'JMD' && latest ? unapplied[r.rep_code || UNASSIGNED] : null;
-      return '<tr><td><b>' + esc(r.rep_code || 'Unassigned') + '</b> <small style="color:var(--ink3)">' + esc(r.rep_name && r.rep_name !== r.rep_code ? r.rep_name : '') + '</small></td><td>' + esc(r.currency) + '</td>' +
-      '<td>' + fmt0(r.target) + '</td><td class="hide-m">' + (r.credit_adj + r.wo_adj ? '-' + fmt0(r.credit_adj + r.wo_adj) : '') + '</td><td><b>' + fmt0(r.adjusted_target) + '</b></td>' +
-      '<td class="hide-m">' + fmt0(r.actual_targeted) + '</td><td class="hide-m">' + fmt0(r.actual_other) + '</td><td><b>' + fmt0(r.actual_total) + '</b></td><td>' + pctHtml(r.actual_total, r.adjusted_target) + '</td>' +
-      '<td class="hide-m ' + (r.adjusted_target - r.actual_total <= 0 ? 'neg' : '') + '">' + fmt0(r.adjusted_target - r.actual_total) + '</td>' +
-      (latest ? '<td class="hide-m">' + (u ? fmt0(u) : '') + '</td>' : '') + '</tr>'; }).join('') || '<tr><td colspan="11" class="empty">No targets for this month.</td></tr>';
-  const rec = rows.some(r => r.reconstructed);
-  $('colFoot').textContent = 'Target = open balance of invoices due by month end (overdue carry-over included) net of open credits, frozen at the start of the month. Collected = all cash received in the month, early payments included, voids deducted. Credit memos and write-offs after the freeze lower the target. USD customers are in USD; the company total converts at the month\'s frozen rate.' +
-    (rec ? ' Some invoices paid early in the month were rebuilt from payment history (due date estimated from customer terms).' : '') + ' Unapplied cash on account is a memo, not part of the collected figure.';
-}
-
 function renderAll(){
-  renderCollections();
   const g = compute();
   document.querySelectorAll('#modeSeg button').forEach(b => b.classList.toggle('on', b.dataset.mode === MODE));
   $('sortSel').parentElement.classList.toggle('hidden', MODE === 'cust');
   renderKpis(g.scoped); renderRepTable(g.pass); drawCustomers(g.scoped);
   const sm = { over60:"old", "90+":"b90", total:"total", name:"name", last:"last" };
   $("sortSel").value = sm[CSORT.key] || "custom";
+  pinVars();
 }
 
 function renderCustomers(){ renderAll(); }
@@ -747,38 +719,72 @@ function buildPdf(repCode, repName, rows){
     }
   });
 
-  const custs = groupCustomers(rows).sort((a, c) => c.over60 - a.over60 || c.total - a.total);
-  const body = [];
+  // One small table per customer so a customer can be kept together on a page, with the column headings drawn by hand
+  // (same x positions as the table columns, so every heading lines up with its numbers).
+  const COLS = [{ w:333, a:'left', t:'Document' }, { w:66, a:'left', t:'Doc date' }, { w:66, a:'left', t:'Due date' }, { w:40, a:'right', t:'Days' }, { w:64, a:'left', t:'Terms' }, { w:100, a:'right', t:'Balance (JMD)' }, { w:100, a:'right', t:'Original (JMD)' }];
+  const LEFT = 36, BOTTOM = 34, HEAD_H = 18, GAP = 14;
+  const colStyles = {}; COLS.forEach((c, i) => { colStyles[i] = { cellWidth:c.w, halign:c.a }; });
+  let headPage = 0;
+  const drawHead = y => {
+    doc.setFillColor(...PDFC.navy); doc.rect(LEFT, y, COLS.reduce((s, c) => s + c.w, 0), HEAD_H, 'F');
+    doc.setTextColor(255); doc.setFont('helvetica', 'bold'); doc.setFontSize(9);
+    let x = LEFT;
+    for(const c of COLS){ c.a === 'right' ? doc.text(c.t, x + c.w - 3, y + 12, { align:'right' }) : doc.text(c.t, x + 3, y + 12); x += c.w; }
+    doc.setTextColor(0); doc.setFont('helvetica', 'normal');
+    headPage = doc.internal.getCurrentPageInfo().pageNumber;
+  };
+  // original amount in JMD, using the rate implied by the open balance (USD documents)
+  const origJmd = r => r.balance_doc ? r.amount_doc * (r.balance_jmd / r.balance_doc) : r.amount_doc;
+  const table = (y, body) => doc.autoTable({
+    startY:y, theme:'plain', margin:{ left:LEFT, right:LEFT, top:HEAD_H + 32, bottom:BOTTOM }, showHead:'never', body,
+    styles:{ fontSize:9, cellPadding:3 }, columnStyles:colStyles, rowPageBreak:'avoid',
+    didDrawPage: () => { if(doc.internal.getCurrentPageInfo().pageNumber !== headPage) drawHead(30); }
+  });
+
+  const custs = groupCustomers(rows).sort((a, c) => a.name.localeCompare(c.name, undefined, { sensitivity:'base' }) || a.id.localeCompare(c.id));
+  let y = doc.lastAutoTable.finalY + 16;
+  drawHead(y); y += HEAD_H;
+  let first = true;
   for(const c of custs){
     const st = logStatus(c.id);
-    body.push([{ content: c.name + '  (' + c.id + ')    Total J$' + pdfMoney(c.total) + (c.over60 ? '    Over 60 days J$' + pdfMoney(c.over60) : ''),
-      colSpan:6, styles:{ fillColor:PDFC.sub, fontStyle:'bold', textColor:PDFC.navy } }]);
+    const body = [];
+    body.push([{ content: c.name + '  (' + c.id + ')', colSpan:7, styles:{ fillColor:PDFC.sub, fontStyle:'bold', textColor:PDFC.navy } }]);
     if(st.promise && (st.promiseOpen || st.promiseOverdue)){
       body.push([{ content:'Promise to pay: J$' + pdfMoney(Number(st.promise.promise_amount) || 0) + ' by ' + dShort(st.promise.promise_date) + (st.promiseOverdue ? '  (OVERDUE)' : ''),
-        colSpan:6, styles:{ fontStyle:'italic', textColor: st.promiseOverdue ? [160, 30, 30] : PDFC.navy } }]);
+        colSpan:7, styles:{ fontStyle:'italic', textColor: st.promiseOverdue ? [160, 30, 30] : PDFC.navy } }]);
     }
+    let origTotal = 0;
     for(const r of c.rows.slice().sort((a, z) => (a.is_credit - z.is_credit) || (z.days_aged || 0) - (a.days_aged || 0))){
       const fill = r.is_credit ? PDFC.cr : r.days_aged > 90 ? PDFC.r : r.days_aged > 60 ? PDFC.o : r.days_aged > 30 ? PDFC.y : null;
       const st_ = fill ? { fillColor:fill } : {};
       const cell = (t, extra) => ({ content:String(t), styles:Object.assign({}, st_, extra || {}) });
+      const o = origJmd(r); origTotal += o;
       body.push([
         cell(r.doc_type + ' ' + r.ref_nbr + (r.currency && r.currency !== 'JMD' ? '  [' + r.currency + ' ' + pdfMoney(Math.abs(r.balance_doc)) + ']' : '')),
-        cell(r.doc_date || ''), cell(r.due_date || ''), cell(r.is_credit ? '-' : r.days_aged, { halign:'right' }), cell(r.terms || ''),
-        cell(pdfMoney(r.balance_jmd), { halign:'right' })
+        cell(r.doc_date || ''), cell(r.due_date || ''), cell(r.is_credit ? '-' : r.days_aged), cell(r.terms || ''),
+        cell(pdfMoney(r.balance_jmd)), cell(pdfMoney(o))
       ]);
       const n = NOTES.get(keyOf(r));
-      if(n) body.push([{ content:'Note: ' + n, colSpan:6, styles:Object.assign({ fontStyle:'italic', fontSize:8.5 }, st_) }]);
+      if(n) body.push([{ content:'Note: ' + n, colSpan:7, styles:Object.assign({ fontStyle:'italic', fontSize:8.5 }, st_) }]);
     }
+    const tot = { fillColor:PDFC.sub, fontStyle:'bold', textColor:PDFC.navy, lineColor:PDFC.navy, lineWidth:{ top:0.6, right:0, bottom:0, left:0 } };
+    body.push([
+      { content:'Customer total' + (c.over60 ? '   (over 60 days J$' + pdfMoney(c.over60) + ')' : ''), colSpan:3, styles:Object.assign({ halign:'right' }, tot) },
+      { content:'', colSpan:2, styles:tot },
+      { content:pdfMoney(c.total), styles:Object.assign({ halign:'right' }, tot) },
+      { content:pdfMoney(origTotal), styles:Object.assign({ halign:'right' }, tot) }
+    ]);
+    // keep a customer together: a small one moves whole to the next page, a long one at least keeps its name bar with its first invoice
+    const ROW = 17, est = body.length * ROW;
+    const need = est <= 230 ? est : ROW * (body.length > 3 && st.promise ? 4 : 3);
+    if(!first){ y += GAP; }
+    if(y + need > H - BOTTOM){ doc.addPage(); drawHead(30); y = 30 + HEAD_H; }
+    table(y, body);
+    y = doc.lastAutoTable.finalY; first = false;
   }
-  body.push([{ content:'GRAND TOTAL', colSpan:5, styles:{ fontStyle:'bold', halign:'right' } }, { content:pdfMoney(b.total), styles:{ fontStyle:'bold', halign:'right' } }]);
-
-  doc.autoTable({
-    startY: doc.lastAutoTable.finalY + 16, margin:{ left:36, right:36, bottom:34 }, theme:'plain',
-    head:[['Document', 'Doc date', 'Due date', 'Days', 'Terms', 'Balance (JMD)']], body,
-    styles:{ fontSize:9, cellPadding:3 }, headStyles:{ fillColor:PDFC.navy, textColor:255 },
-    columnStyles:{ 3:{ halign:'right' }, 5:{ halign:'right' } },
-    rowPageBreak:'avoid'
-  });
+  if(y + 40 > H - BOTTOM){ doc.addPage(); drawHead(30); y = 30 + HEAD_H; }
+  table(y + GAP, [[{ content:'GRAND TOTAL', colSpan:5, styles:{ fontStyle:'bold', halign:'right' } }, { content:pdfMoney(b.total), styles:{ fontStyle:'bold', halign:'right' } },
+    { content:pdfMoney(rows.reduce((t, r) => t + origJmd(r), 0)), styles:{ fontStyle:'bold', halign:'right' } }]]);
 
   const pages = doc.internal.getNumberOfPages();
   for(let i = 1; i <= pages; i++){
@@ -896,7 +902,7 @@ function showFreshness(){
   const ageDays = (Date.now() - new Date(SNAP.completed_at).getTime()) / 86400000;
   $('asof').textContent = 'Aged as of ' + SNAP.snapshot_date + ' · updated ' + when(SNAP.completed_at) + ' · refreshed every Monday and Thursday';
   let html = '';
-  if(ageDays > 4) html += '<div class="banner stale">This data is ' + Math.floor(ageDays) + ' days old. The Monday/Thursday refresh may have failed — please tell Joel.</div>';
+  if(ageDays > 4) html += '<div class="banner stale">This data is ' + Math.floor(ageDays) + ' days old. The Monday/Thursday refresh may have failed — please tell IT Support.</div>';
   try {
     const k = 'ar_seen_snapshot_' + PROFILE.id, seen = Number(localStorage.getItem(k) || 0);
     if(seen && seen < SNAP.id) html += '<div class="banner fresh">New numbers since your last visit — updated ' + esc(when(SNAP.completed_at)) + '.</div>';
@@ -905,6 +911,16 @@ function showFreshness(){
   $('banner').innerHTML = html;
 }
 
+// Measures the pinned header and toolbar so the table headings can stick right under them (see .pin / .hdr in the CSS).
+function pinVars(){
+  const h = document.querySelector('.hdr'), p = document.querySelector('.pin');
+  const root = document.documentElement.style;
+  root.setProperty('--hdr', (h ? h.offsetHeight : 0) + 'px');
+  root.setProperty('--pin', (p && getComputedStyle(p).position === 'sticky' ? p.offsetHeight : 0) + 'px');
+}
+if(window.ResizeObserver){ const ro = new ResizeObserver(pinVars); ['.hdr', '.pin'].forEach(s => { const e = document.querySelector(s); if(e) ro.observe(e); }); }
+window.addEventListener('resize', pinVars);
+
 async function init(profile){
   if(PROFILE) return;
   PROFILE = profile; ALL_MODE = true;   // everyone who can open the page sees every rep
@@ -912,11 +928,11 @@ async function init(profile){
     await load();
   } catch(e){
     console.error(e);
-    $('asof').textContent = ''; $('custList').innerHTML = '<div class="empty">Could not load AR data. Please refresh, or tell Joel if it keeps happening.</div>'; return;
+    $('asof').textContent = ''; $('custList').innerHTML = '<div class="empty">Could not load AR data. Please refresh, or tell IT Support if it keeps happening.</div>'; return;
   }
   if(!SNAP){ $('asof').textContent = ''; $('custList').innerHTML = '<div class="empty">No AR snapshot is available yet.</div>'; return; }
   try { const m = localStorage.getItem('ar_mode'); if(m === 'rep' || m === 'cust') MODE = m; } catch(_) {}
-  showFreshness(); setupRepSelect(); $('dlBtn').disabled = false; $('pdfBtn').disabled = false; renderAll();
+  showFreshness(); setupRepSelect(); $('dlBtn').disabled = false; $('pdfBtn').disabled = false; renderAll(); pinVars();
 }
 
 $('repTable').addEventListener('click', e => {
@@ -950,7 +966,6 @@ $('modeSeg').addEventListener('click', e => {
   renderAll();
 });
 $('viewSel').addEventListener('change', refilter);
-$('colMonth').addEventListener('change', () => { COLMONTH = $('colMonth').value; renderCollections(); });
 $('dlBtn').addEventListener('click', download);
 $('pdfBtn').addEventListener('click', downloadPdf);
 $('lgCancel').addEventListener('click', () => $('logModal').classList.add('hidden'));
@@ -977,7 +992,7 @@ async function start(){
   $('signout').classList.remove('hidden'); $('who').textContent = session.user.email || '';
   const { data: access, error } = await sb.rpc('ar_my_access');
   if(error || !access || !access.level){
-    gate('<h2>No access</h2><p>You are signed in as <b>' + esc(session.user.email) + '</b>, but this account is not set up for AR Aging. Ask Joel to add you.</p><button class="btn" id="so">Sign out</button>');
+    gate('<h2>No access</h2><p>You are signed in as <b>' + esc(session.user.email) + '</b>, but this account is not set up for AR Aging. Ask IT Support to add you.</p><button class="btn" id="so">Sign out</button>');
     $('so').addEventListener('click', signOut); return;
   }
   $('who').textContent = (access.name || session.user.email) + ' · ' + access.level.replace('_', ' ');
