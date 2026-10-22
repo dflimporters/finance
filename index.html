@@ -610,13 +610,15 @@ function renderCustomers(){ renderAll(); }
 // ---------- Excel ----------
 const FILL = { y:'FFFFF2B3', o:'FFFFD3A8', r:'FFFFB3B3', hdr:'FF1A2E5A', sub:'FFE8EFFB', cr:'FFE6F4EC' };
 function fillCell(cell, argb){ cell.fill = { type:'pattern', pattern:'solid', fgColor:{ argb } }; }
+// Original document amount in JMD, using the rate implied by the open balance (matters for USD documents).
+const origJmd = r => r.balance_doc ? r.amount_doc * (r.balance_jmd / r.balance_doc) : r.amount_doc;
 
 async function buildWorkbook(repCode, repName, rows){
   const wb = new ExcelJS.Workbook();
   wb.creator = 'DFL Importers'; wb.created = new Date();
   const ws = wb.addWorksheet('AR Aging', { views:[{ state:'frozen', ySplit:9 }] });
   ws.columns = [
-    { width:12 },{ width:34 },{ width:13 },{ width:13 },{ width:12 },{ width:12 },{ width:9 },{ width:8 },{ width:16 },{ width:16 },{ width:8 },{ width:10 },{ width:36 }
+    { width:12 },{ width:34 },{ width:13 },{ width:13 },{ width:12 },{ width:12 },{ width:9 },{ width:8 },{ width:16 },{ width:16 },{ width:16 },{ width:8 },{ width:10 },{ width:36 }
   ];
   const sb_ = sumBuckets(rows);
   ws.getCell('A1').value = 'AR Aging — ' + (repName || repCode || 'Unassigned') + (repCode ? ' (' + repCode + ')' : '');
@@ -632,29 +634,35 @@ async function buildWorkbook(repCode, repName, rows){
   ws.getCell('A6').value = 'Colour key:'; ws.getCell('A6').font = { bold:true };
   [['Over 30 days',FILL.y],['Over 60 days',FILL.o],['Over 90 days',FILL.r]].forEach(([t,f],i) => { const c = ws.getCell(6, 2 + i); c.value = t; fillCell(c, f); c.alignment = { horizontal:'center' }; });
 
-  const head = ['Customer ID','Customer','Type','Ref #','Doc date','Due date','Terms','Ccy','Amount (doc ccy)','Balance (JMD)','Days','Bucket','Note'];
+  const head = ['Customer ID','Customer','Type','Ref #','Doc date','Due date','Terms','Ccy','Balance (doc ccy)','Balance (JMD)','Original (JMD)','Days','Bucket','Note'];
   const hr = ws.getRow(9);
-  head.forEach((h,i) => { const c = hr.getCell(i+1); c.value = h; c.font = { bold:true, color:{ argb:'FFFFFFFF' } }; fillCell(c, FILL.hdr); c.alignment = { horizontal: i >= 8 && i <= 9 ? 'right' : 'left' }; });
+  head.forEach((h,i) => { const c = hr.getCell(i+1); c.value = h; c.font = { bold:true, color:{ argb:'FFFFFFFF' } }; fillCell(c, FILL.hdr); c.alignment = { horizontal: i >= 8 && i <= 10 ? 'right' : 'left' }; });
 
-  const custs = groupCustomers(rows).sort((a,b) => b.over60 - a.over60 || b.total - a.total);
-  let rn = 10;
+  const custs = groupCustomers(rows).sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity:'base' }) || a.id.localeCompare(b.id));
+  const MONEY = '#,##0.00;[Red]-#,##0.00';
+  let rn = 10, grandOrig = 0;
   for(const c of custs){
+    let origTotal = 0;
     const docs = c.rows.slice().sort((a,b) => (a.is_credit - b.is_credit) || (b.days_aged||0) - (a.days_aged||0));
     for(const r of docs){
       const row = ws.getRow(rn++);
-      row.values = [r.customer_id, r.customer_name, r.doc_type, r.ref_nbr, r.doc_date, r.due_date || '', r.terms || '', r.currency || '', r.balance_doc, r.balance_jmd, r.is_credit ? '' : r.days_aged, r.bucket, NOTES.get(keyOf(r)) || ''];
-      row.getCell(9).numFmt = '#,##0.00;[Red]-#,##0.00'; row.getCell(10).numFmt = '#,##0.00;[Red]-#,##0.00';
+      row.values = [r.customer_id, r.customer_name, r.doc_type, r.ref_nbr, r.doc_date, r.due_date || '', r.terms || '', r.currency || '', r.balance_doc, r.balance_jmd, origJmd(r), r.is_credit ? '' : r.days_aged, r.bucket, NOTES.get(keyOf(r)) || ''];
+      for(const n of [9, 10, 11]) row.getCell(n).numFmt = MONEY;
+      origTotal += origJmd(r);
       const col = r.is_credit ? FILL.cr : r.days_aged > 90 ? FILL.r : r.days_aged > 60 ? FILL.o : r.days_aged > 30 ? FILL.y : null;
-      if(col) for(let i = 1; i <= 13; i++) fillCell(row.getCell(i), col);
+      if(col) for(let i = 1; i <= 14; i++) fillCell(row.getCell(i), col);
     }
     const sr = ws.getRow(rn++);
-    sr.getCell(2).value = 'Customer total — ' + c.name; sr.getCell(10).value = c.total; sr.getCell(10).numFmt = '#,##0.00;[Red]-#,##0.00';
-    for(let i = 1; i <= 13; i++){ fillCell(sr.getCell(i), FILL.sub); sr.getCell(i).font = { bold:true }; }
+    sr.getCell(2).value = 'Customer total — ' + c.name + (c.over60 ? '   (over 60 days ' + fmt(c.over60) + ')' : '');
+    sr.getCell(10).value = c.total; sr.getCell(11).value = origTotal; grandOrig += origTotal;
+    sr.getCell(10).numFmt = MONEY; sr.getCell(11).numFmt = MONEY;
+    for(let i = 1; i <= 14; i++){ fillCell(sr.getCell(i), FILL.sub); sr.getCell(i).font = { bold:true }; }
   }
   const tr = ws.getRow(rn + 1);
-  tr.getCell(2).value = 'GRAND TOTAL'; tr.getCell(10).value = sb_.total; tr.getCell(10).numFmt = '#,##0.00;[Red]-#,##0.00';
-  for(let i = 1; i <= 13; i++) tr.getCell(i).font = { bold:true };
-  ws.autoFilter = { from:{ row:9, column:1 }, to:{ row:9, column:13 } };
+  tr.getCell(2).value = 'GRAND TOTAL'; tr.getCell(10).value = sb_.total; tr.getCell(11).value = grandOrig;
+  tr.getCell(10).numFmt = MONEY; tr.getCell(11).numFmt = MONEY;
+  for(let i = 1; i <= 14; i++) tr.getCell(i).font = { bold:true };
+  ws.autoFilter = { from:{ row:9, column:1 }, to:{ row:9, column:14 } };
   ws.pageSetup = { orientation:'landscape', fitToPage:true, fitToWidth:1, fitToHeight:0 };
   return wb.xlsx.writeBuffer();
 }
@@ -733,8 +741,6 @@ function buildPdf(repCode, repName, rows){
     doc.setTextColor(0); doc.setFont('helvetica', 'normal');
     headPage = doc.internal.getCurrentPageInfo().pageNumber;
   };
-  // original amount in JMD, using the rate implied by the open balance (USD documents)
-  const origJmd = r => r.balance_doc ? r.amount_doc * (r.balance_jmd / r.balance_doc) : r.amount_doc;
   const table = (y, body) => doc.autoTable({
     startY:y, theme:'plain', margin:{ left:LEFT, right:LEFT, top:HEAD_H + 32, bottom:BOTTOM }, showHead:'never', body,
     styles:{ fontSize:9, cellPadding:3 }, columnStyles:colStyles, rowPageBreak:'avoid',
