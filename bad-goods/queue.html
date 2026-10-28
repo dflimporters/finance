@@ -1,0 +1,567 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0D1B3E">
+<title>DFL · Bad Goods Queue</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&family=Open+Sans:wght@400;600&display=swap" rel="stylesheet">
+<!--
+  Bad Goods manager queue. Finance reviews the slips entered in the portal (entry.html now, the sales and
+  merchandiser apps later), approves or rejects them, and (next step) pushes approved slips to Acumatica.
+  Standalone page, same Microsoft sign-in as the AR pages. Anyone with AR access can SEE the queue; only
+  approvers (bg_is_approver(): admins and the finance_manager level) can approve, reject or change prices.
+  All of that is enforced by RLS in Postgres, not by this page.
+
+  Status flow:  submitted -> approved -> pushing -> pushed   (rejected / failed branch off)
+  Approve and reject are bulk-able. A price override (line level, reason mandatory) is only possible while a
+  slip is still 'submitted'; un-approve a slip first to change it. The totals on a slip are the database's own
+  ext_price sums (generated columns), so what is approved is exactly what will be pushed.
+  Flags are computed here: possible duplicate (same customer + items + total within 7 days), price override,
+  USD customer, large slip (threshold is a per-browser setting).
+-->
+<style>
+:root{
+  --navy:#0D1B3E; --navy2:#1a2e5a; --blue:#326BD3; --blue-t:#E8EFFB;
+  --bg:#F5F7FA; --card:#FFFFFF; --line:#E1E6EF;
+  --ink:#1A2340; --ink2:#4A5578; --ink3:#8A95B0;
+  --green:#1A8F4C; --green-t:#E6F4EC; --red:#D63B3B; --red-t:#FBE9E9; --amber-t:#FFF2D6;
+  --hf:"Montserrat",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --bf:"Open Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--bf)}
+.hidden{display:none!important}
+.topbar{background:var(--navy);color:#fff;display:flex;align-items:center;gap:12px;padding:10px 16px}
+.topbar img{height:30px}.topbar #who{margin-left:auto;font-size:13px;color:#C9D4EE}
+.tabs{background:var(--navy2);display:flex;gap:2px;padding:0 16px;overflow-x:auto}
+.tabs a{color:#C9D4EE;text-decoration:none;font:700 12px var(--hf);letter-spacing:.04em;padding:10px 16px;border-bottom:3px solid transparent;white-space:nowrap}
+.tabs a:hover{color:#fff}.tabs a.on{color:#fff;border-bottom-color:#F2D64B}
+.tabs a small{font:600 10px var(--hf);opacity:.7}
+.tabs.sub{background:#fff;border-bottom:1px solid var(--line)}
+.tabs.sub a{color:var(--ink2);padding:9px 16px}.tabs.sub a:hover{color:var(--blue)}
+.tabs.sub a.on{color:var(--blue);border-bottom-color:var(--blue)}
+.btn{font:700 12px var(--hf);letter-spacing:.04em;background:var(--blue);color:#fff;border:0;border-radius:6px;height:40px;padding:0 16px;cursor:pointer;white-space:nowrap}
+.btn.ghost{background:#fff;color:var(--blue);border:1px solid var(--blue)}
+.btn.danger{background:var(--red)}
+.btn.green{background:var(--green)}
+.btn.small{height:32px;padding:0 12px;font-size:11px;background:transparent;color:#fff;border:1px solid #6F82B3}
+.btn.sm{height:30px;padding:0 12px;font-size:11px}
+.btn:disabled{opacity:.5;cursor:default}
+.gate{max-width:420px;margin:70px auto;background:#fff;border:1px solid var(--line);border-radius:10px;padding:28px;text-align:center}
+.gate h2{font:800 20px var(--hf);margin:0 0 8px}.gate p{color:var(--ink2);margin:0 0 18px}
+.gate .ms{display:inline-flex;align-items:center;gap:10px;width:auto;padding:0 18px}
+.page{max-width:1560px;margin:0 auto;padding:20px 16px 110px}
+.ptitle{font:800 22px var(--hf);margin:0 0 2px}
+.psub{color:var(--ink2);margin:0 0 14px;font-size:13px}
+.banner{border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px;background:var(--blue-t);border:1px solid #c9d8f5;color:var(--navy2)}
+.strip{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-bottom:14px}
+.kpi{background:var(--navy2);color:#fff;border-radius:10px;padding:12px 14px;min-width:0}
+.kpi .l{font:600 10px var(--hf);text-transform:uppercase;letter-spacing:.09em;color:#9FB0D6}
+.kpi .v{font:700 20px var(--hf);font-variant-numeric:tabular-nums}
+.kpi .d{font-size:11.5px;color:#9FB0D6;min-height:17px}
+.kpi.warn{border-top:4px solid #F2D64B}.kpi.hot{border-top:4px solid #E5534B}.kpi.ok{border-top:4px solid #3fb57a}
+.stabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}
+.stabs button{font:700 12px var(--hf);background:#fff;color:var(--ink2);border:1px solid #CBD3E1;border-radius:20px;padding:7px 14px;cursor:pointer}
+.stabs button.on{background:var(--blue);color:#fff;border-color:var(--blue)}
+.stabs button small{font:600 11px var(--hf);opacity:.8;margin-left:4px}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:8px;margin-bottom:16px}
+.fbar{display:flex;flex-wrap:wrap;gap:10px;align-items:end;padding:12px 14px;border-bottom:1px solid var(--line)}
+.lbl{display:grid;gap:3px;font:600 10.5px var(--hf);color:var(--ink2);text-transform:uppercase;letter-spacing:.06em}
+.inp{height:36px;border:1px solid #CBD3E1;border-radius:6px;padding:0 9px;font:14px var(--bf);background:#fff;color:var(--ink);text-transform:none;letter-spacing:0;min-width:130px;max-width:100%}
+.inp.num{width:110px;min-width:0}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th{font:700 10.5px var(--hf);text-transform:uppercase;letter-spacing:.06em;color:var(--ink2);text-align:right;padding:8px 10px;background:#F0F3F8;white-space:nowrap}
+th.sortable{cursor:pointer;user-select:none}th.sortable:hover{color:var(--blue)}
+td{padding:8px 10px;text-align:right;border-top:1px solid var(--line);vertical-align:top}
+th.l,td.l{text-align:left}
+td.c,th.c{text-align:center;width:34px}
+tr.row{cursor:pointer}tr.row:hover td{background:#F7F9FD}
+tr.row.sel td{background:#EAF1FD}
+tr.sub td{background:#FBFCFE;text-align:left;padding:0}
+.det{padding:14px 18px;display:grid;grid-template-columns:minmax(0,2.2fr) minmax(260px,1fr);gap:20px}
+.det h4{font:700 11px var(--hf);text-transform:uppercase;letter-spacing:.08em;color:var(--ink2);margin:0 0 6px}
+.det table td,.det table th{padding:6px 8px}
+.det input.ov{width:92px;height:30px;text-align:right;border:1px solid #CBD3E1;border-radius:6px;padding:0 6px;font:13px var(--bf)}
+.det input.ovr{width:150px;height:30px;border:1px solid #CBD3E1;border-radius:6px;padding:0 6px;font:13px var(--bf)}
+.cust-name b{font:700 13px var(--hf)}.cust-name small{display:block;color:var(--ink3);font-size:11.5px}
+.tag{display:inline-block;font:700 10px var(--hf);background:#E8EFFB;color:var(--blue);border-radius:4px;padding:0 6px;line-height:18px;margin:1px 2px 1px 0;white-space:nowrap}
+.tag.warn{background:var(--amber-t);color:#6b4b00}.tag.bad{background:var(--red-t);color:#8a1f1f}.tag.ok{background:var(--green-t);color:#13693a}
+.st{display:inline-block;border-radius:10px;padding:0 9px;font:600 11px var(--hf);line-height:20px;background:#EEF1F7;color:var(--ink2)}
+.st.submitted{background:var(--blue-t);color:var(--navy2)}.st.approved,.st.pushed{background:var(--green-t);color:#13693a}
+.st.rejected,.st.failed{background:var(--red-t);color:#8a1f1f}.st.pushing{background:var(--amber-t);color:#6b4b00}
+.age.warn{color:#9a6200;font-weight:600}.age.hot{color:#B3261E;font-weight:700}
+.empty{padding:30px;text-align:center;color:var(--ink3)}
+.msg{font-size:13px}.msg.err{color:#8a1f1f}.msg.ok{color:#13693a}
+.foot{color:var(--ink3);font-size:12px;margin-top:6px}
+.sum{display:flex;gap:18px;padding:10px 14px;border-top:1px solid var(--line);background:#FBFCFE;justify-content:flex-end;flex-wrap:wrap}
+.sum div{text-align:right}.sum small{display:block;color:var(--ink3);font:600 10.5px var(--hf);text-transform:uppercase;letter-spacing:.06em}.sum b{font:700 15px var(--hf)}
+.abar{position:fixed;left:0;right:0;bottom:0;background:var(--navy);color:#fff;padding:10px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;z-index:40;box-shadow:0 -4px 18px rgba(13,27,62,.3)}
+.abar .info{margin-right:auto;font:600 13px var(--bf)}
+.abar .btn.ghost{background:transparent;color:#fff;border-color:#6F82B3}
+.modal{position:fixed;inset:0;background:rgba(13,27,62,.55);display:flex;align-items:center;justify-content:center;z-index:60;padding:16px}
+.mbox{background:#fff;border-radius:10px;padding:18px;max-width:480px;width:100%}
+.mbox h3{margin:0 0 4px;font:800 16px var(--hf)}
+.mbox textarea{width:100%;min-height:90px;border:1px solid #CBD3E1;border-radius:6px;padding:9px;font:14px var(--bf);margin:10px 0}
+.mrow{display:flex;gap:8px;justify-content:flex-end}
+.ev{border-left:3px solid var(--line);padding:1px 0 1px 9px;margin:6px 0;font-size:12.5px;color:var(--ink2)}
+.ev b{color:var(--ink)}
+.chips{display:flex;gap:6px;flex-wrap:wrap;margin:6px 0}
+.chips button{font:600 11px var(--hf);background:#EEF1F7;border:0;border-radius:12px;padding:4px 10px;cursor:pointer;color:var(--ink2)}
+@media (max-width:1000px){.strip{grid-template-columns:repeat(2,minmax(0,1fr))}.det{grid-template-columns:1fr}}
+@media (max-width:640px){.page{padding:14px 10px 120px}.inp{min-width:0;width:100%}.lbl{flex:1 1 45%}}
+</style>
+</head>
+<body>
+<header>
+<div class="topbar"><img src="https://hzagwndglwhcepsirafi.supabase.co/storage/v1/object/public/Assets/DFL%20Logo%20Blue_White.png" alt="DFL Importers"><span id="who"></span><button class="btn small hidden" id="signout">Sign out</button></div>
+<nav class="tabs" aria-label="Finance sections"><a href="../index.html">Aging</a><a href="../collections.html">Collections</a><a class="on" href="queue.html">Bad Goods</a></nav>
+<nav class="tabs sub" aria-label="Bad goods sections"><a class="on" href="queue.html">Queue</a><a href="entry.html#new">New slip <small>(test)</small></a><a href="entry.html#pack">Pack sizes</a></nav>
+</header>
+<div class="gate hidden" id="gate"></div>
+
+<div class="page hidden" id="app">
+  <h1 class="ptitle">Bad goods queue</h1>
+  <p class="psub" id="psub">Loading…</p>
+  <div class="banner hidden" id="roBanner">You can view the queue but not approve: approving needs the finance manager or admin level.</div>
+
+  <div class="strip" id="kpis"></div>
+  <div class="stabs" id="stabs"></div>
+
+  <div class="panel">
+    <div class="fbar">
+      <label class="lbl">Customer <input id="fCust" class="inp" type="search" placeholder="Name or ID"></label>
+      <label class="lbl">Rep <select id="fRep" class="inp"><option value="">All reps</option></select></label>
+      <label class="lbl">Sales area <select id="fArea" class="inp"><option value="">All areas</option></select></label>
+      <label class="lbl">Shipping zone <select id="fZone" class="inp"><option value="">All zones</option></select></label>
+      <label class="lbl">Entered by <select id="fBy" class="inp"><option value="">Anyone</option></select></label>
+      <label class="lbl">Slip date from <input id="fFrom" class="inp" type="date"></label>
+      <label class="lbl">to <input id="fTo" class="inp" type="date"></label>
+      <label class="lbl">Net J$ min <input id="fMin" class="inp num" type="number" min="0" step="100" inputmode="decimal"></label>
+      <label class="lbl">max <input id="fMax" class="inp num" type="number" min="0" step="100" inputmode="decimal"></label>
+      <label class="lbl">Flag <select id="fFlag" class="inp"><option value="">Any</option><option value="dup">Possible duplicate</option><option value="ovr">Price overridden</option><option value="large">Large slip</option><option value="usd">USD customer</option></select></label>
+      <label class="lbl">Large from J$ <input id="fLarge" class="inp num" type="number" min="0" step="1000" inputmode="decimal"></label>
+      <label class="lbl">Sort <select id="fSort" class="inp"><option value="old">Oldest first</option><option value="new">Newest first</option><option value="big">Largest value</option><option value="cust">Customer A–Z</option></select></label>
+      <button class="btn ghost sm" id="fClear" type="button">Clear</button>
+      <button class="btn ghost sm" id="refreshBtn" type="button">Refresh</button>
+      <button class="btn ghost sm" id="csvBtn" type="button">Export CSV</button>
+    </div>
+    <div class="scroll"><table id="tbl"></table></div>
+    <div class="sum" id="sum"></div>
+  </div>
+  <p class="foot" id="foot"></p>
+</div>
+
+<div class="abar hidden" id="abar"></div>
+
+<div class="modal hidden" id="rejModal" role="dialog" aria-modal="true">
+  <div class="mbox">
+    <h3>Reject slips</h3>
+    <div id="rejInfo" style="color:var(--ink2);font-size:13px"></div>
+    <div class="chips" id="rejChips"></div>
+    <textarea id="rejText" maxlength="500" placeholder="Reason (the person who entered it will see this)"></textarea>
+    <div class="msg err" id="rejErr"></div>
+    <div class="mrow"><button class="btn ghost" id="rejCancel">Cancel</button><button class="btn danger" id="rejGo">Reject</button></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+(function(){
+"use strict";
+const $ = id => document.getElementById(id);
+const sb = supabase.createClient('https://hzagwndglwhcepsirafi.supabase.co', 'sb_publishable_5rAinfDT1K9kwEQnqYwlOA_-C5tk_6h', {
+  auth: { persistSession:true, autoRefreshToken:true, detectSessionInUrl:true, flowType:'pkce', storageKey:'dfl-ar-aging-auth' }
+});
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = n => (n < 0 ? '-' : '') + Math.abs(Number(n) || 0).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 });
+const fmt0 = n => Math.round(Number(n) || 0).toLocaleString('en-US');
+const r2 = n => Math.round((n + Number.EPSILON) * 100) / 100;
+const jmDate = d => new Intl.DateTimeFormat('en-CA', { timeZone:'America/Jamaica' }).format(d);
+const TODAY = jmDate(new Date());
+const dShort = s => s ? new Date(s + 'T00:00:00').toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : '';
+const when = iso => iso ? new Date(iso).toLocaleString('en-GB', { timeZone:'America/Jamaica', day:'numeric', month:'short', hour:'numeric', minute:'2-digit', hour12:true }) : '';
+const ageDays = iso => iso ? Math.max(0, Math.round((Date.parse(TODAY + 'T00:00:00Z') - Date.parse(jmDate(new Date(iso)) + 'T00:00:00Z')) / 86400000)) : 0;
+const safeQ = s => s.replace(/[%,()*\\:"']/g, ' ').replace(/\s+/g, ' ').trim();
+const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
+const GCT = 0.15, LIST_LIMIT = 200;
+const STATUSES = [['submitted','Pending approval'],['approved','Approved'],['pushed','Pushed'],['failed','Failed'],['rejected','Rejected'],['','All']];
+const REJECT_REASONS = ['Wrong customer', 'Quantity looks too high', 'Item or price query', 'Duplicate slip', 'Not covered by the bad goods policy', 'More detail needed'];
+const COLS = 'id,bg_number,slip_date,customer_id,customer_name,currency_id,shipping_zone,sales_area,salesperson_name,status,total_net,entered_by_name,entry_source,note,created_at,submitted_at,reviewed_by_name,reviewed_at,reject_reason,acu_ref_nbr,push_error';
+
+let ME = null, APPROVER = false;
+let STATUS = 'submitted';
+let ROWS = [];                       // batches in the current view (after client-side flag filter)
+let SUMMARY = [];                    // status/total/submitted_at for every slip matching the non-status filters
+const LINES = new Map();             // batch_id -> lines
+const FLAGS = new Map();             // batch_id -> { dup:bgNumber|null, ovr:bool, usd:bool, large:bool }
+const SEL = new Set(), OPEN = new Set();
+let LARGE = 100000, LOADED_AT = 0, LOADING = false;
+try{ const v = parseFloat(localStorage.getItem('bg_large')); if(v > 0) LARGE = v; }catch(_){}
+
+// ---------- filters ----------
+function filters(){
+  return { cust: safeQ($('fCust').value), rep: $('fRep').value, area: $('fArea').value, zone: $('fZone').value, by: $('fBy').value,
+    from: $('fFrom').value, to: $('fTo').value, min: $('fMin').value, max: $('fMax').value };
+}
+function applyFilters(qb){
+  const f = filters();
+  if(f.cust) qb = qb.or('customer_name.ilike.%' + f.cust + '%,customer_id.ilike.%' + f.cust + '%,bg_number.ilike.%' + f.cust + '%');
+  if(f.rep) qb = qb.eq('salesperson_name', f.rep);
+  if(f.area) qb = qb.eq('sales_area', f.area);
+  if(f.zone) qb = qb.eq('shipping_zone', f.zone);
+  if(f.by) qb = qb.eq('entered_by_name', f.by);
+  if(f.from) qb = qb.gte('slip_date', f.from);
+  if(f.to) qb = qb.lte('slip_date', f.to);
+  if(f.min !== '') qb = qb.gte('total_net', f.min);
+  if(f.max !== '') qb = qb.lte('total_net', f.max);
+  return qb;
+}
+
+async function fillOptions(){
+  // Distinct reps, areas, zones and entry people across all slips (a small table), so the dropdowns only offer real values.
+  const { data } = await sb.from('bg_batches').select('salesperson_name,sales_area,shipping_zone,entered_by_name').limit(5000);
+  const uniq = k => [...new Set((data || []).map(r => r[k]).filter(Boolean))].sort((a, b) => a.localeCompare(b));
+  const set = (id, vals, first) => { const el = $(id), cur = el.value; el.innerHTML = '<option value="">' + first + '</option>' + vals.map(v => '<option>' + esc(v) + '</option>').join(''); el.value = cur; };
+  set('fRep', uniq('salesperson_name'), 'All reps'); set('fArea', uniq('sales_area'), 'All areas');
+  set('fZone', uniq('shipping_zone'), 'All zones'); set('fBy', uniq('entered_by_name'), 'Anyone');
+}
+
+// ---------- loading ----------
+async function fetchLines(ids){
+  const need = ids.filter(id => !LINES.has(id));
+  for(let i = 0; i < need.length; i += 40){
+    const chunk = need.slice(i, i + 40);
+    const { data, error } = await sb.from('bg_lines').select('id,batch_id,line_no,inventory_id,description,uom,qty,list_price,rate,unit_price,override_price,override_reason,ext_price,reason_code').in('batch_id', chunk).order('line_no').limit(1000);
+    if(error) throw error;
+    for(const id of chunk) LINES.set(id, []);
+    for(const l of data) LINES.get(l.batch_id).push(l);
+  }
+}
+const lineSig = ls => ls.map(l => l.inventory_id + '|' + l.uom + '|' + Number(l.qty)).sort().join(',');
+
+async function computeFlags(){
+  FLAGS.clear();
+  // Duplicate = another live slip for the same customer, within 7 days, with the same items, quantities and total.
+  const live = ROWS.filter(b => b.status !== 'rejected');
+  const byCust = new Map();
+  for(const b of live){ if(!byCust.has(b.customer_id)) byCust.set(b.customer_id, []); byCust.get(b.customer_id).push(b); }
+  for(const b of ROWS){
+    const ls = LINES.get(b.id) || [];
+    const fl = { dup: null, ovr: ls.some(l => l.override_price != null), usd: !!(b.currency_id && b.currency_id !== 'JMD'), large: Number(b.total_net) >= LARGE };
+    if(b.status !== 'rejected'){
+      for(const o of byCust.get(b.customer_id) || []){
+        if(o.id === b.id) continue;
+        if(Math.abs(Number(o.total_net) - Number(b.total_net)) > 0.015) continue;
+        if(Math.abs(Date.parse(o.created_at) - Date.parse(b.created_at)) > 7 * 86400000) continue;
+        if(lineSig(LINES.get(o.id) || []) === lineSig(ls) && ls.length){ fl.dup = o.bg_number; break; }
+      }
+    }
+    FLAGS.set(b.id, fl);
+  }
+}
+
+async function load(){
+  if(LOADING) return; LOADING = true;
+  $('tbl').innerHTML = '<tbody><tr><td class="empty">Loading…</td></tr></tbody>';
+  try{
+    const sumQ = applyFilters(sb.from('bg_batches').select('status,total_net,submitted_at,created_at')).limit(5000);
+    let listQ = applyFilters(sb.from('bg_batches').select(COLS));
+    if(STATUS) listQ = listQ.eq('status', STATUS);
+    const sort = $('fSort').value;
+    listQ = sort === 'new' ? listQ.order('created_at', { ascending:false })
+      : sort === 'big' ? listQ.order('total_net', { ascending:false })
+      : sort === 'cust' ? listQ.order('customer_name', { ascending:true })
+      : listQ.order('created_at', { ascending:true });
+    const [s, l] = await Promise.all([sumQ, listQ.limit(LIST_LIMIT)]);
+    if(s.error) throw s.error; if(l.error) throw l.error;
+    SUMMARY = s.data; ROWS = l.data;
+    await fetchLines(ROWS.map(b => b.id));
+    await computeFlags();
+    const flag = $('fFlag').value;
+    if(flag){
+      ROWS = ROWS.filter(b => { const f = FLAGS.get(b.id); return flag === 'dup' ? f.dup : flag === 'ovr' ? f.ovr : flag === 'large' ? f.large : f.usd; });
+    }
+    for(const id of [...SEL]) if(!ROWS.some(b => b.id === id)) SEL.delete(id);
+    LOADED_AT = Date.now();
+    renderAll();
+  }catch(e){
+    $('tbl').innerHTML = '<tbody><tr><td class="empty">Could not load: ' + esc(e.message || e) + '</td></tr></tbody>';
+  }finally{ LOADING = false; }
+}
+
+// ---------- render ----------
+function renderKpis(){
+  const sub = SUMMARY.filter(r => r.status === 'submitted'), app = SUMMARY.filter(r => r.status === 'approved');
+  const sum = a => a.reduce((s, r) => s + Number(r.total_net), 0);
+  const oldest = sub.length ? Math.max(...sub.map(r => ageDays(r.submitted_at || r.created_at))) : 0;
+  const rej30 = SUMMARY.filter(r => r.status === 'rejected').length;
+  const pushed = SUMMARY.filter(r => r.status === 'pushed');
+  $('kpis').innerHTML =
+    '<div class="kpi warn"><div class="l">Pending approval</div><div class="v">' + sub.length + '</div><div class="d">J$ ' + fmt0(sum(sub)) + ' net</div></div>' +
+    '<div class="kpi ' + (oldest > 7 ? 'hot' : oldest > 3 ? 'warn' : 'ok') + '"><div class="l">Oldest waiting</div><div class="v">' + (sub.length ? oldest + (oldest === 1 ? ' day' : ' days') : '—') + '</div><div class="d">since submitted</div></div>' +
+    '<div class="kpi ok"><div class="l">Approved, to push</div><div class="v">' + app.length + '</div><div class="d">J$ ' + fmt0(sum(app)) + ' net</div></div>' +
+    '<div class="kpi"><div class="l">Pushed to Acumatica</div><div class="v">' + pushed.length + '</div><div class="d">J$ ' + fmt0(sum(pushed)) + ' net</div></div>' +
+    '<div class="kpi ' + (SUMMARY.filter(r => r.status === 'failed').length ? 'hot' : '') + '"><div class="l">Failed / rejected</div><div class="v">' + SUMMARY.filter(r => r.status === 'failed').length + ' / ' + rej30 + '</div><div class="d">push failures / rejections</div></div>';
+}
+function renderTabs(){
+  const cnt = k => k ? SUMMARY.filter(r => r.status === k).length : SUMMARY.length;
+  $('stabs').innerHTML = STATUSES.map(([k, lab]) => '<button data-s="' + k + '" class="' + (k === STATUS ? 'on' : '') + '">' + lab + '<small>' + cnt(k) + '</small></button>').join('');
+}
+function flagTags(b){
+  const f = FLAGS.get(b.id) || {}; const out = [];
+  if(f.dup) out.push('<span class="tag bad" title="Same customer, items and total as ' + esc(f.dup) + ' within 7 days">Possible duplicate of ' + esc(f.dup) + '</span>');
+  if(f.ovr) out.push('<span class="tag warn">Price overridden</span>');
+  if(f.large) out.push('<span class="tag warn">Large</span>');
+  if(f.usd) out.push('<span class="tag bad">' + esc(b.currency_id) + ' · key by hand</span>');
+  return out.join('');
+}
+function renderTable(){
+  const t = $('tbl');
+  if(!ROWS.length){ t.innerHTML = '<tbody><tr><td class="empty">' + (STATUS === 'submitted' ? 'Nothing waiting for approval with these filters.' : 'No slips match.') + '</td></tr></tbody>'; $('sum').innerHTML = ''; return; }
+  const canSel = APPROVER && (STATUS === 'submitted' || STATUS === 'approved');
+  const allSel = canSel && ROWS.every(b => SEL.has(b.id));
+  let head = '<thead><tr>' + (canSel ? '<th class="c"><input type="checkbox" id="selAll"' + (allSel ? ' checked' : '') + ' aria-label="Select all"></th>' : '') +
+    '<th class="l">Slip</th><th class="l">Customer</th><th class="l">Rep / area</th><th>Slip date</th><th>Age</th><th>Lines</th><th>Net (J$)</th><th class="l">Flags</th><th class="l">Status</th><th class="l">Entered by</th></tr></thead>';
+  const body = ROWS.map(b => {
+    const ls = LINES.get(b.id) || [], open = OPEN.has(b.id), age = ageDays(b.submitted_at || b.created_at);
+    const ageCls = b.status === 'submitted' ? (age > 7 ? 'hot' : age > 3 ? 'warn' : '') : '';
+    let h = '<tr class="row' + (SEL.has(b.id) ? ' sel' : '') + '" data-b="' + b.id + '">' +
+      (canSel ? '<td class="c"><input type="checkbox" class="sel"' + (SEL.has(b.id) ? ' checked' : '') + ' aria-label="Select ' + esc(b.bg_number) + '"></td>' : '') +
+      '<td class="l"><b>' + esc(b.bg_number) + '</b></td>' +
+      '<td class="l cust-name"><b>' + esc(b.customer_name) + '</b><small>' + esc(b.customer_id) + (b.shipping_zone ? ' · ' + esc(b.shipping_zone) : '') + '</small></td>' +
+      '<td class="l">' + esc(b.salesperson_name || '—') + '<small style="display:block;color:var(--ink3)">' + esc(b.sales_area || '') + '</small></td>' +
+      '<td>' + esc(dShort(b.slip_date)) + '</td><td><span class="age ' + ageCls + '">' + age + 'd</span></td><td>' + ls.length + '</td>' +
+      '<td><b>' + fmt(b.total_net) + '</b></td><td class="l">' + flagTags(b) + '</td>' +
+      '<td class="l"><span class="st ' + esc(b.status) + '">' + esc(b.status) + '</span></td><td class="l">' + esc(b.entered_by_name || '') + '<small style="display:block;color:var(--ink3)">' + esc(when(b.created_at)) + '</small></td></tr>';
+    if(open) h += '<tr class="sub" data-sub="' + b.id + '"><td colspan="' + (canSel ? 11 : 10) + '">' + detailHtml(b) + '</td></tr>';
+    return h;
+  }).join('');
+  t.innerHTML = head + '<tbody>' + body + '</tbody>';
+  const net = ROWS.reduce((s, b) => s + Number(b.total_net), 0);
+  $('sum').innerHTML = '<div><small>Slips shown</small><b>' + ROWS.length + (ROWS.length >= LIST_LIMIT ? '+' : '') + '</b></div><div><small>Net (J$)</small><b>' + fmt(net) + '</b></div>' +
+    '<div><small>Est. GCT 15%</small><b>' + fmt(r2(net * GCT)) + '</b></div><div><small>Est. credit (J$)</small><b>' + fmt(r2(net * (1 + GCT))) + '</b></div>';
+}
+function detailHtml(b){
+  const ls = LINES.get(b.id) || [], editable = APPROVER && b.status === 'submitted';
+  const rows = ls.map(l => {
+    const eff = l.override_price != null ? Number(l.override_price) : Number(l.unit_price);
+    const acuText = (l.uom === 'CASE' ? parseInt(l.qty, 10) + 'cs ' : '') + l.description;
+    return '<tr data-l="' + l.id + '"><td class="l"><b>' + esc(l.inventory_id) + '</b> ' + esc(l.description) + '<small style="display:block;color:var(--ink3)">Acumatica line: ' + esc(acuText) + ' · EACH</small></td>' +
+      '<td>' + esc(Number(l.qty)) + (l.uom === 'CASE' ? ' cases' : ' units') + '</td><td>' + fmt(l.list_price) + '</td><td>' + fmt(l.unit_price) + '</td>' +
+      '<td>' + (editable
+        ? '<input class="ov" type="number" min="0" step="0.01" inputmode="decimal" value="' + (l.override_price != null ? esc(l.override_price) : '') + '" placeholder="override"> ' +
+          '<input class="ovr" maxlength="80" value="' + esc(l.override_reason || '') + '" placeholder="Reason (required)"> <button class="btn ghost sm ovsave" type="button">Set</button>'
+        : (l.override_price != null ? '<span class="tag warn">' + fmt(l.override_price) + '</span> ' + esc(l.override_reason || '') : '')) + '</td>' +
+      '<td><b>' + fmt(l.ext_price) + '</b></td><td class="l">' + esc(l.reason_code || '') + '</td></tr>';
+  }).join('');
+  return '<div class="det"><div><h4>Lines</h4><div class="scroll"><table><thead><tr><th class="l">Item</th><th>Qty</th><th>List</th><th>75% price</th><th>' + (editable ? 'Price override' : 'Override') + '</th><th>Amount</th><th class="l">Reason</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+    (b.note ? '<h4 style="margin-top:12px">Note from entry</h4><div>' + esc(b.note) + '</div>' : '') +
+    (b.reject_reason ? '<h4 style="margin-top:12px">Rejected</h4><div>' + esc(b.reject_reason) + ' <span style="color:var(--ink3)">(' + esc(b.reviewed_by_name || '') + ', ' + esc(when(b.reviewed_at)) + ')</span></div>' : '') +
+    (b.push_error ? '<h4 style="margin-top:12px">Push error</h4><div class="msg err">' + esc(b.push_error) + '</div>' : '') +
+    (b.acu_ref_nbr ? '<h4 style="margin-top:12px">Acumatica</h4><div>Credit memo <b>' + esc(b.acu_ref_nbr) + '</b></div>' : '') +
+    '</div><div><h4>This customer, last 90 days</h4><div id="hist-' + b.id + '" class="msg" style="color:var(--ink2)">Loading…</div>' +
+    '<h4 style="margin-top:12px">History</h4><div id="ev-' + b.id + '" class="msg" style="color:var(--ink2)">Loading…</div></div></div>';
+}
+function renderAll(){ renderKpis(); renderTabs(); renderTable(); renderBar(); $('foot').textContent = 'Slips are priced at 75% of the Acumatica default price and approved exactly as shown. ' + (ROWS.length >= LIST_LIMIT ? 'Showing the first ' + LIST_LIMIT + '; narrow the filters to see others. ' : '') + 'Large slip threshold: J$ ' + fmt0(LARGE) + '.'; }
+
+function renderBar(){
+  const bar = $('abar');
+  if(!APPROVER || !SEL.size){ bar.classList.add('hidden'); return; }
+  const picked = ROWS.filter(b => SEL.has(b.id)), net = picked.reduce((s, b) => s + Number(b.total_net), 0);
+  bar.classList.remove('hidden');
+  bar.innerHTML = '<span class="info">' + picked.length + ' selected · J$ ' + fmt(net) + ' net</span>' +
+    (STATUS === 'submitted' ? '<button class="btn green" id="aApprove">Approve ' + picked.length + '</button><button class="btn danger" id="aReject">Reject…</button>' : '') +
+    (STATUS === 'approved' ? '<button class="btn ghost" id="aUn">Move back to pending</button><button class="btn danger" id="aReject">Reject…</button><button class="btn" id="aPush" disabled title="The Acumatica push is the next build step">Push to Acumatica (coming next)</button>' : '') +
+    '<button class="btn ghost" id="aClear">Clear selection</button>';
+}
+
+// ---------- row detail (lazy extras) ----------
+async function loadExtras(b){
+  const hist = $('hist-' + b.id), ev = $('ev-' + b.id);
+  const since = new Date(Date.now() - 90 * 86400000).toISOString();
+  const [h, e] = await Promise.all([
+    sb.from('bg_batches').select('bg_number,slip_date,status,total_net').eq('customer_id', b.customer_id).neq('id', b.id).neq('status', 'rejected').gte('created_at', since).order('created_at', { ascending:false }).limit(20),
+    sb.from('bg_events').select('at,actor_name,event,detail').eq('batch_id', b.id).order('at')
+  ]);
+  if(hist){
+    if(h.error) hist.textContent = h.error.message;
+    else if(!h.data.length) hist.textContent = 'No other bad goods slips for this customer in the last 90 days.';
+    else hist.innerHTML = '<b>' + h.data.length + ' other slip' + (h.data.length > 1 ? 's' : '') + ' · J$ ' + fmt(h.data.reduce((s, r) => s + Number(r.total_net), 0)) + '</b><br>' +
+      h.data.slice(0, 6).map(r => esc(r.bg_number) + ' · ' + esc(dShort(r.slip_date)) + ' · J$ ' + fmt(r.total_net) + ' · ' + esc(r.status)).join('<br>');
+  }
+  if(ev){
+    if(e.error) ev.textContent = e.error.message;
+    else if(!e.data.length) ev.textContent = 'No history recorded.';
+    else ev.innerHTML = e.data.map(x => '<div class="ev"><b>' + esc(x.event) + '</b> · ' + esc(x.actor_name || '') + ' · ' + esc(when(x.at)) +
+      (x.detail && x.detail.reason ? '<br>' + esc(x.detail.reason) : '') + (x.detail && x.detail.line ? '<br>' + esc(x.detail.line) : '') + '</div>').join('');
+  }
+}
+
+// ---------- actions ----------
+async function logEvents(ids, event, detail){
+  const rows = ids.map(id => ({ batch_id: id, actor_name: ME.name, event, detail: detail || null }));
+  const { error } = await sb.from('bg_events').insert(rows);
+  if(error) console.warn('event log failed', error.message);
+}
+async function transition(ids, from, to, extra, event, detail){
+  const patch = Object.assign({ status: to }, extra);
+  const { data, error } = await sb.from('bg_batches').update(patch).in('id', ids).eq('status', from).select('id');
+  if(error) throw error;
+  const done = data.map(r => r.id);
+  if(done.length) await logEvents(done, event, detail);
+  return { done: done.length, skipped: ids.length - done.length };
+}
+const stamp = () => ({ reviewed_by: ME.id, reviewed_by_name: ME.name, reviewed_at: new Date().toISOString() });
+function say(text, kind){ $('psub').className = 'psub msg ' + (kind || ''); $('psub').textContent = text; }
+
+async function approve(){
+  const picked = ROWS.filter(b => SEL.has(b.id));
+  if(!picked.length) return;
+  const warn = [];
+  for(const b of picked){ const f = FLAGS.get(b.id); if(f.dup) warn.push(b.bg_number + ': possible duplicate of ' + f.dup); if(f.usd) warn.push(b.bg_number + ': ' + b.currency_id + ' customer, will not be pushed automatically'); }
+  if(warn.length && !window.confirm('Check these before approving:\n\n' + warn.join('\n') + '\n\nApprove anyway?')) return;
+  $('aApprove').disabled = true;
+  try{
+    const r = await transition(picked.map(b => b.id), 'submitted', 'approved', stamp(), 'approved');
+    SEL.clear(); say('Approved ' + r.done + (r.skipped ? ' (' + r.skipped + ' had changed and were skipped)' : '') + '.', 'ok');
+  }catch(e){ say('Could not approve: ' + (e.message || e), 'err'); }
+  await load();
+}
+async function moveBack(){
+  const picked = ROWS.filter(b => SEL.has(b.id)); if(!picked.length) return;
+  try{
+    const r = await transition(picked.map(b => b.id), 'approved', 'submitted', { reviewed_by: null, reviewed_by_name: null, reviewed_at: null }, 'moved back to pending');
+    SEL.clear(); say('Moved ' + r.done + ' back to pending.', 'ok');
+  }catch(e){ say('Could not move back: ' + (e.message || e), 'err'); }
+  await load();
+}
+function openReject(){
+  const picked = ROWS.filter(b => SEL.has(b.id)); if(!picked.length) return;
+  $('rejInfo').textContent = picked.length + ' slip' + (picked.length > 1 ? 's' : '') + ' · J$ ' + fmt(picked.reduce((s, b) => s + Number(b.total_net), 0)) + ' net';
+  $('rejChips').innerHTML = REJECT_REASONS.map(r => '<button type="button">' + esc(r) + '</button>').join('');
+  $('rejText').value = ''; $('rejErr').textContent = ''; $('rejModal').classList.remove('hidden'); $('rejText').focus();
+}
+async function doReject(){
+  const reason = $('rejText').value.trim();
+  if(reason.length < 3){ $('rejErr').textContent = 'Give a reason so the person who entered it knows what to fix.'; return; }
+  const picked = ROWS.filter(b => SEL.has(b.id)); $('rejGo').disabled = true;
+  try{
+    const r1 = await transition(picked.filter(b => b.status === 'submitted').map(b => b.id), 'submitted', 'rejected', Object.assign({ reject_reason: reason }, stamp()), 'rejected', { reason });
+    const r2 = await transition(picked.filter(b => b.status === 'approved').map(b => b.id), 'approved', 'rejected', Object.assign({ reject_reason: reason }, stamp()), 'rejected', { reason });
+    SEL.clear(); $('rejModal').classList.add('hidden'); say('Rejected ' + (r1.done + r2.done) + '.', 'ok');
+  }catch(e){ $('rejErr').textContent = e.message || String(e); $('rejGo').disabled = false; return; }
+  $('rejGo').disabled = false; await load();
+}
+async function saveOverride(tr){
+  const lineId = tr.dataset.l, batchId = tr.closest('tr.sub').dataset.sub;
+  const b = ROWS.find(x => x.id === batchId); if(!b || b.status !== 'submitted') return;
+  const l = (LINES.get(batchId) || []).find(x => x.id === lineId); if(!l) return;
+  const v = tr.querySelector('.ov').value.trim(), reason = tr.querySelector('.ovr').value.trim();
+  let patch, line;
+  if(v === ''){ patch = { override_price: null, override_reason: null }; line = l.inventory_id + ': override cleared'; }
+  else{
+    const n = Number(v);
+    if(!(n >= 0)){ say('Enter a price of 0 or more.', 'err'); return; }
+    if(reason.length < 3){ say('A reason is required for a price override.', 'err'); tr.querySelector('.ovr').focus(); return; }
+    patch = { override_price: n, override_reason: reason }; line = l.inventory_id + ': unit price ' + fmt(l.unit_price) + ' to ' + fmt(n) + ' (' + reason + ')';
+  }
+  const { error } = await sb.from('bg_lines').update(patch).eq('id', lineId);
+  if(error){ say('Could not save: ' + error.message, 'err'); return; }
+  // The database recomputed ext_price; refresh this slip's lines and its total.
+  LINES.delete(batchId); await fetchLines([batchId]);
+  const total = r2((LINES.get(batchId) || []).reduce((s, x) => s + Number(x.ext_price), 0));
+  const { error: ue } = await sb.from('bg_batches').update({ total_net: total }).eq('id', batchId);
+  if(ue){ say('Line saved but the slip total did not update: ' + ue.message, 'err'); return; }
+  b.total_net = total; await logEvents([batchId], 'price override', { line });
+  await computeFlags(); say('Saved. ' + b.bg_number + ' is now J$ ' + fmt(total) + ' net.', 'ok'); renderAll(); loadExtras(b);
+}
+
+// ---------- export ----------
+function csvCell(v){ const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
+function exportCsv(){
+  if(!ROWS.length){ say('Nothing to export.', 'err'); return; }
+  const head = ['Slip','Slip date','Status','Customer ID','Customer','Rep','Sales area','Shipping zone','Entered by','Item','Description','Entered as','Qty','List price','75% price','Override price','Override reason','Amount','Reason','Slip net'];
+  const out = [head];
+  for(const b of ROWS) for(const l of LINES.get(b.id) || [])
+    out.push([b.bg_number, b.slip_date, b.status, b.customer_id, b.customer_name, b.salesperson_name, b.sales_area, b.shipping_zone, b.entered_by_name, l.inventory_id, l.description, l.uom === 'CASE' ? 'Cases' : 'Units', Number(l.qty), l.list_price, l.unit_price, l.override_price, l.override_reason, l.ext_price, l.reason_code, b.total_net]);
+  const blob = new Blob(['﻿' + out.map(r => r.map(csvCell).join(',')).join('\r\n')], { type:'text/csv;charset=utf-8' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'bad-goods-' + (STATUS || 'all') + '-' + TODAY + '.csv'; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
+
+// ---------- wiring ----------
+$('stabs').addEventListener('click', e => { const b = e.target.closest('button[data-s]'); if(!b) return; STATUS = b.dataset.s; SEL.clear(); OPEN.clear(); load(); });
+$('tbl').addEventListener('click', e => {
+  if(e.target.id === 'selAll'){ ROWS.forEach(b => e.target.checked ? SEL.add(b.id) : SEL.delete(b.id)); renderTable(); renderBar(); return; }
+  const sub = e.target.closest('tr.sub');
+  if(sub){
+    if(e.target.closest('.ovsave')) saveOverride(e.target.closest('tr[data-l]'));
+    return;
+  }
+  const tr = e.target.closest('tr.row'); if(!tr) return;
+  const id = tr.dataset.b, b = ROWS.find(x => x.id === id);
+  if(e.target.classList.contains('sel')){ e.target.checked ? SEL.add(id) : SEL.delete(id); tr.classList.toggle('sel', SEL.has(id)); renderBar(); return; }
+  if(OPEN.has(id)) OPEN.delete(id); else OPEN.add(id);
+  renderTable(); if(OPEN.has(id) && b) loadExtras(b);
+});
+$('abar').addEventListener('click', e => {
+  const id = e.target.id;
+  if(id === 'aApprove') approve(); else if(id === 'aReject') openReject(); else if(id === 'aUn') moveBack();
+  else if(id === 'aClear'){ SEL.clear(); renderTable(); renderBar(); }
+});
+$('rejChips').addEventListener('click', e => { const b = e.target.closest('button'); if(b) $('rejText').value = b.textContent; });
+$('rejCancel').addEventListener('click', () => $('rejModal').classList.add('hidden'));
+$('rejGo').addEventListener('click', doReject);
+const reload = debounce(() => { OPEN.clear(); load(); }, 300);
+for(const id of ['fCust', 'fMin', 'fMax']) $(id).addEventListener('input', reload);
+for(const id of ['fRep', 'fArea', 'fZone', 'fBy', 'fFrom', 'fTo', 'fFlag', 'fSort']) $(id).addEventListener('change', reload);
+$('fLarge').addEventListener('change', () => { const v = parseFloat($('fLarge').value); if(v > 0){ LARGE = v; try{ localStorage.setItem('bg_large', String(v)); }catch(_){} computeFlags().then(() => { renderAll(); }); } });
+$('fClear').addEventListener('click', () => { for(const id of ['fCust','fRep','fArea','fZone','fBy','fFrom','fTo','fMin','fMax','fFlag']) $(id).value = ''; $('fSort').value = 'old'; OPEN.clear(); load(); });
+$('refreshBtn').addEventListener('click', () => { LINES.clear(); load(); fillOptions(); });
+$('csvBtn').addEventListener('click', exportCsv);
+document.addEventListener('visibilitychange', () => { if(!document.hidden && Date.now() - LOADED_AT > 120000 && !SEL.size) { LINES.clear(); load(); } });
+
+async function init(){
+  $('fLarge').value = LARGE;
+  const r = await sb.rpc('bg_is_approver');
+  APPROVER = r.data === true;
+  $('roBanner').classList.toggle('hidden', APPROVER);
+  say(ME.name + (APPROVER ? ' · can approve' : ' · view only'));
+  await fillOptions();
+  await load();
+}
+
+// ---------- sign-in (same as the AR pages) ----------
+const MS_LOGO = '<svg width="18" height="18" viewBox="0 0 21 21" aria-hidden="true"><path fill="#f25022" d="M1 1h9v9H1z"/><path fill="#7fba00" d="M11 1h9v9h-9z"/><path fill="#00a4ef" d="M1 11h9v9H1z"/><path fill="#ffb900" d="M11 11h9v9h-9z"/></svg>';
+function gate(html){ $('app').classList.add('hidden'); $('gate').classList.remove('hidden'); $('gate').innerHTML = html; }
+async function signIn(){
+  const { error } = await sb.auth.signInWithOAuth({ provider:'azure', options:{ scopes:'email openid profile', redirectTo: location.origin + location.pathname } });
+  if(error) alert("Couldn't start sign-in: " + error.message);
+}
+async function signOut(){ await sb.auth.signOut(); location.reload(); }
+$('signout').addEventListener('click', signOut);
+async function start(){
+  const { data:{ session } } = await sb.auth.getSession();
+  if(!session){
+    gate('<h2>Bad Goods Queue</h2><p>Sign in with your DFL Microsoft account.</p><button class="btn ms" id="signin">' + MS_LOGO + 'Sign in with Microsoft</button>');
+    $('signin').addEventListener('click', signIn); return;
+  }
+  $('signout').classList.remove('hidden'); $('who').textContent = session.user.email || '';
+  const { data: access, error } = await sb.rpc('ar_my_access');
+  if(error || !access || !access.level){
+    gate('<h2>No access</h2><p>You are signed in as <b>' + esc(session.user.email) + '</b>, but this account is not set up for the Bad Goods queue. Ask IT Support to add you.</p><button class="btn" id="so">Sign out</button>');
+    $('so').addEventListener('click', signOut); return;
+  }
+  ME = { id: session.user.id, name: access.name || session.user.email, level: access.level };
+  $('who').textContent = ME.name + ' · ' + ME.level.replace('_', ' ');
+  $('gate').classList.add('hidden'); $('app').classList.remove('hidden');
+  init();
+}
+start();
+})();
+</script>
+</body>
+</html>

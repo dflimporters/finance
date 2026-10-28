@@ -1,0 +1,553 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0D1B3E">
+<title>DFL · Bad Goods Entry</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&family=Open+Sans:wght@400;600&display=swap" rel="stylesheet">
+<!--
+  Bad Goods entry (finance test screen). Replaces keying paper slips into Acumatica one by one.
+  Standalone page, same Microsoft sign-in and access check as the AR pages (ar_my_access()); the data is
+  protected by RLS, not by this page. See SCOPE.md.
+
+  Pricing: 75% (bg_settings.rate) of the Acumatica DEFAULT price, which is per CASE.
+    case line : list = case price
+    unit line : list = case price / units per case  (bg_item_pack, must be confirmed by finance)
+  The database computes unit_price and ext_price from list_price and rate (generated columns); the figures
+  on this page are a preview of the same sum.
+
+  What the future Acumatica credit memo will look like (the clerk's convention): generic item 10001840,
+  UOM EACH always, case lines described as "<qty>cs <item name>", a header and a footer line with the slip
+  number and date. Nothing is pushed from this page; entries go to the finance queue only.
+-->
+<style>
+:root{
+  --navy:#0D1B3E; --navy2:#1a2e5a; --blue:#326BD3; --blue-t:#E8EFFB;
+  --bg:#F5F7FA; --card:#FFFFFF; --line:#E1E6EF;
+  --ink:#1A2340; --ink2:#4A5578; --ink3:#8A95B0;
+  --green:#1A8F4C; --green-t:#E6F4EC; --red:#D63B3B; --red-t:#FBE9E9; --amber-t:#FFF2D6;
+  --hf:"Montserrat",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --bf:"Open Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--bf)}
+.hidden{display:none!important}
+.topbar{background:var(--navy);color:#fff;display:flex;align-items:center;gap:12px;padding:10px 16px}
+.topbar img{height:30px}.topbar #who{margin-left:auto;font-size:13px;color:#C9D4EE}
+.tabs{background:var(--navy2);display:flex;gap:2px;padding:0 16px;overflow-x:auto}
+.tabs a{color:#C9D4EE;text-decoration:none;font:700 12px var(--hf);letter-spacing:.04em;padding:10px 16px;border-bottom:3px solid transparent;white-space:nowrap}
+.tabs a:hover{color:#fff}.tabs a.on{color:#fff;border-bottom-color:#F2D64B}
+.tabs a small{font:600 10px var(--hf);opacity:.7}
+.tabs.sub{background:#fff;border-bottom:1px solid var(--line)}
+.tabs.sub a{color:var(--ink2);padding:9px 16px}.tabs.sub a:hover{color:var(--blue)}
+.tabs.sub a.on{color:var(--blue);border-bottom-color:var(--blue)}
+.gate{max-width:420px;margin:70px auto;background:#fff;border:1px solid var(--line);border-radius:10px;padding:28px;text-align:center}
+.gate h2{font:800 20px var(--hf);margin:0 0 8px}.gate p{color:var(--ink2);margin:0 0 18px}
+.gate .ms{display:inline-flex;align-items:center;gap:10px;width:auto;padding:0 18px}
+.page{max-width:1180px;margin:0 auto;padding:20px 16px 90px}
+.ptitle{font:800 22px var(--hf);margin:0 0 2px}
+.psub{color:var(--ink2);margin:0 0 14px;font-size:13px}
+.banner{border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:13px;background:var(--amber-t);border:1px solid #f0d9a0;color:#6b4b00}
+.btn{font:700 12px var(--hf);letter-spacing:.04em;background:var(--blue);color:#fff;border:0;border-radius:6px;height:40px;padding:0 16px;cursor:pointer}
+.btn.ghost{background:#fff;color:var(--blue);border:1px solid var(--blue)}
+.btn.small{height:32px;padding:0 12px;font-size:11px;background:transparent;color:#fff;border:1px solid #6F82B3}
+.btn.sm{height:30px;padding:0 12px;font-size:11px}
+.btn:disabled{opacity:.55;cursor:default}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:8px;margin-bottom:16px;overflow:visible}
+.panel h2{font:700 12px var(--hf);text-transform:uppercase;letter-spacing:.08em;color:var(--ink2);margin:0;padding:12px 14px;border-bottom:1px solid var(--line)}
+.pbody{padding:14px}
+.fgrid{display:grid;grid-template-columns:2fr 1fr 1fr;gap:12px}
+.fgrid label,.lbl{display:grid;gap:3px;font:600 11px var(--hf);color:var(--ink2);text-transform:uppercase;letter-spacing:.06em;align-content:start}
+.fgrid input,.fgrid select,.fgrid textarea,.inp{height:40px;border:1px solid #CBD3E1;border-radius:6px;padding:0 10px;font:14px var(--bf);width:100%;background:#fff;color:var(--ink);text-transform:none;letter-spacing:0}
+.fgrid .full{grid-column:1/-1}
+.fgrid textarea{height:60px;padding:8px 10px;resize:vertical}
+.srch{position:relative}
+.drop{position:absolute;left:0;right:0;top:100%;z-index:30;background:#fff;border:1px solid #CBD3E1;border-radius:6px;box-shadow:0 8px 24px rgba(13,27,62,.15);max-height:340px;overflow:auto;margin-top:2px}
+.drop .opt{padding:8px 12px;cursor:pointer;border-top:1px solid var(--line);display:flex;gap:10px;align-items:baseline;text-transform:none;letter-spacing:0;font:400 13.5px var(--bf);color:var(--ink)}
+.drop .opt:first-child{border-top:0}.drop .opt:hover,.drop .opt.act{background:#F0F5FE}
+.drop .opt b{font:700 12px var(--hf);color:var(--navy2);min-width:78px}
+.drop .opt span.r{margin-left:auto;color:var(--ink2);font-size:12px;white-space:nowrap}
+.drop .none{padding:12px;color:var(--ink3);text-transform:none;letter-spacing:0;font:400 13px var(--bf)}
+.chosen{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--blue-t);border-radius:6px;padding:8px 12px;margin-top:8px;font-size:13px}
+.chosen b{font:700 13.5px var(--hf)}.chosen .x{margin-left:auto;border:0;background:none;color:var(--blue);font:700 12px var(--hf);cursor:pointer}
+.tag{display:inline-block;font:700 10px var(--hf);background:#E8EFFB;color:var(--blue);border-radius:4px;padding:0 6px;line-height:18px}
+.tag.warn{background:var(--amber-t);color:#6b4b00}.tag.bad{background:var(--red-t);color:#8a1f1f}.tag.ok{background:var(--green-t);color:#13693a}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th{font:700 10.5px var(--hf);text-transform:uppercase;letter-spacing:.06em;color:var(--ink2);text-align:right;padding:8px 10px;background:#F0F3F8;white-space:nowrap}
+td{padding:8px 10px;text-align:right;border-top:1px solid var(--line);vertical-align:middle}
+th:first-child,td:first-child,th.l,td.l{text-align:left}
+td.item{white-space:normal;min-width:240px}
+td.item b{font:700 12px var(--hf);color:var(--navy2)}
+td.item small{display:block;color:var(--ink3);font-size:11.5px}
+td input,td select{height:34px;border:1px solid #CBD3E1;border-radius:6px;padding:0 8px;font:14px var(--bf);background:#fff;color:var(--ink)}
+td input.qty{width:74px;text-align:right}
+td select{max-width:130px}
+.totals{display:flex;gap:18px;justify-content:flex-end;flex-wrap:wrap;padding:12px 14px;border-top:1px solid var(--line);background:#FBFCFE;font-variant-numeric:tabular-nums}
+.totals div{text-align:right}.totals small{display:block;color:var(--ink3);font:600 10.5px var(--hf);text-transform:uppercase;letter-spacing:.06em}
+.totals b{font:700 16px var(--hf)}
+.actions{display:flex;gap:10px;justify-content:flex-end;align-items:center;flex-wrap:wrap}
+.msg{font-size:13px;min-height:20px}.msg.err{color:#8a1f1f}.msg.ok{color:#13693a}
+.empty{padding:26px;text-align:center;color:var(--ink3)}
+.foot{color:var(--ink3);font-size:12px;margin-top:6px}
+.st{display:inline-block;border-radius:10px;padding:0 9px;font:600 11px var(--hf);line-height:20px;background:#EEF1F7;color:var(--ink2)}
+.st.submitted{background:var(--blue-t);color:var(--navy2)}.st.approved,.st.pushed{background:var(--green-t);color:#13693a}
+.st.rejected,.st.failed{background:var(--red-t);color:#8a1f1f}
+tr.click{cursor:pointer}tr.click:hover td{background:#F7F9FD}
+tr.sub td{background:#FBFCFE;font-size:13px}
+.bar{display:flex;gap:10px;align-items:end;flex-wrap:wrap;margin-bottom:12px}
+.bar .inp{width:auto;min-width:240px}
+@media (max-width:760px){
+  .fgrid{grid-template-columns:1fr}
+  .page{padding:14px 12px 90px}
+  .bar .inp{width:100%}
+  td.item{min-width:170px}
+}
+</style>
+</head>
+<body>
+<header>
+<div class="topbar"><img src="https://hzagwndglwhcepsirafi.supabase.co/storage/v1/object/public/Assets/DFL%20Logo%20Blue_White.png" alt="DFL Importers"><span id="who"></span><button class="btn small hidden" id="signout">Sign out</button></div>
+<div id="tabs" class="hidden">
+  <nav class="tabs" aria-label="Finance sections"><a href="../index.html">Aging</a><a href="../collections.html">Collections</a><a class="on" href="queue.html">Bad Goods</a></nav>
+  <nav class="tabs sub" aria-label="Bad goods sections"><a href="queue.html">Queue</a><a href="entry.html#new" data-tab="new">New slip <small>(test)</small></a><a href="entry.html#pack" data-tab="pack">Pack sizes</a></nav>
+</div>
+</header>
+<div class="gate hidden" id="gate"></div>
+
+<div class="page hidden" id="app">
+  <h1 class="ptitle" id="ptitle">Bad goods entry</h1>
+  <p class="psub" id="psub"></p>
+  <div class="banner" id="banner">Test screen. In production, reps and merchandisers enter slips in their own app. Slips entered here go to the Queue for approval; nothing is sent to Acumatica yet.</div>
+
+  <!-- NEW SLIP -->
+  <section id="tab-new">
+    <div class="panel">
+      <h2>Slip</h2>
+      <div class="pbody">
+        <div class="fgrid">
+          <label class="srch">Customer *
+            <input id="custQ" type="search" placeholder="Type customer name or ID" autocomplete="off">
+            <div class="drop hidden" id="custDrop"></div>
+          </label>
+          <label>Slip number <input id="slipNo" placeholder="Assigned when submitted" disabled></label>
+          <label>Slip date * <input id="slipDate" type="date"></label>
+          <div class="full" id="custChosen"></div>
+          <label>Default reason <select id="reasonDef"></select></label>
+          <label class="full">Note <textarea id="note" maxlength="500" placeholder="Anything finance should know (optional)"></textarea></label>
+        </div>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>Items</h2>
+      <div class="pbody">
+        <label class="lbl srch">Add item
+          <input id="itemQ" class="inp" type="search" placeholder="Type item code or name, e.g. ginger beer" autocomplete="off">
+          <div class="drop hidden" id="itemDrop"></div>
+        </label>
+      </div>
+      <div class="scroll"><table id="lines"></table></div>
+      <div class="totals" id="totals"></div>
+    </div>
+
+    <div class="actions">
+      <span class="msg" id="msg"></span>
+      <button class="btn ghost" id="clearBtn">Clear</button>
+      <button class="btn" id="submitBtn" disabled>Submit slip</button>
+    </div>
+    <p class="foot">Prices are 75% of the Acumatica default price (per case). Unit lines use the confirmed units per case. GCT is added by Acumatica when the memo is created; the figure above is an estimate at 15%.</p>
+  </section>
+
+  <!-- PACK SIZES -->
+  <section id="tab-pack" class="hidden">
+    <div class="panel">
+      <h2>Units per case</h2>
+      <div class="pbody">
+        <p class="psub" style="margin-bottom:10px">Acumatica has no unit conversions, so pack sizes are kept here. Sizes read from item descriptions are suggestions until you confirm them. Unit lines can only be entered for confirmed items.</p>
+        <div class="bar">
+          <label class="lbl">Find item <input id="packQ" class="inp" type="search" placeholder="Code or name (blank = unconfirmed list)"></label>
+          <span class="msg" id="packMsg"></span>
+        </div>
+      </div>
+      <div class="scroll"><table id="packTbl"></table></div>
+    </div>
+  </section>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+(function(){
+"use strict";
+const $ = id => document.getElementById(id);
+const sb = supabase.createClient('https://hzagwndglwhcepsirafi.supabase.co', 'sb_publishable_5rAinfDT1K9kwEQnqYwlOA_-C5tk_6h', {
+  auth: { persistSession:true, autoRefreshToken:true, detectSessionInUrl:true, flowType:'pkce', storageKey:'dfl-ar-aging-auth' }
+});
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = n => (n < 0 ? '-' : '') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 });
+const r2 = n => Math.round((n + Number.EPSILON) * 100) / 100;
+const r4 = n => Math.round((n + Number.EPSILON) * 10000) / 10000;
+const jmDate = d => new Intl.DateTimeFormat('en-CA', { timeZone:'America/Jamaica' }).format(d);
+const when = iso => new Date(iso).toLocaleString('en-GB', { timeZone:'America/Jamaica', day:'numeric', month:'short', hour:'numeric', minute:'2-digit', hour12:true });
+const safeQ = s => s.replace(/[%,()*\\:"']/g, ' ').replace(/\s+/g, ' ').trim();
+const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
+const GCT = 0.15;
+
+let ME = null, RATE = 0.75, REASONS = [];
+let CUST = null;                 // chosen customer row
+let LINES = [];                  // { key, item, mode:'CASE'|'UNIT', qty, reason }
+const ITEMS = new Map();         // inventory_id -> { id, description, price, upc, confirmed }
+
+// ---------- pricing ----------
+function listPrice(l){
+  const it = l.item;
+  if(l.mode === 'CASE') return it.price;
+  if(!it.upc || !it.confirmed) return null;
+  return r4(it.price / it.upc);
+}
+function calc(l){
+  const lp = listPrice(l);
+  if(lp == null) return null;
+  const unit = r2(lp * RATE);
+  const qty = Number(l.qty) || 0;
+  return { list: lp, unit, ext: r2(qty * unit) };
+}
+
+// ---------- customer search ----------
+async function searchCust(){
+  const q = safeQ($('custQ').value);
+  const d = $('custDrop');
+  if(q.length < 2){ d.classList.add('hidden'); return; }
+  const { data, error } = await sb.from('customers')
+    .select('customer_id,customer_name,currency_id,shipping_zone,sales_area,salesperson_id,default_salesperson_code,customer_status,area')
+    .or('customer_name.ilike.%' + q + '%,customer_id.ilike.%' + q + '%').order('customer_name').limit(15);
+  d.classList.remove('hidden');
+  if(error){ d.innerHTML = '<div class="none">Search failed: ' + esc(error.message) + '</div>'; return; }
+  if(!data.length){ d.innerHTML = '<div class="none">No customers match.</div>'; return; }
+  d.innerHTML = data.map(c => '<div class="opt" data-c="' + esc(c.customer_id) + '"><b>' + esc(c.customer_id) + '</b>' + esc(c.customer_name) +
+    '<span class="r">' + esc(c.shipping_zone || c.area || '') + '</span></div>').join('');
+  d._rows = Object.fromEntries(data.map(c => [c.customer_id, c]));
+}
+async function chooseCust(c){
+  CUST = Object.assign({}, c, { rep_code: c.default_salesperson_code || null, rep_name: null });
+  $('custDrop').classList.add('hidden'); $('custQ').value = '';
+  renderCust(); validate();
+  // The rep comes from the customer's salesperson_id (default_salesperson_code is often empty).
+  if(c.salesperson_id != null){
+    const { data } = await sb.from('salespersons').select('sp_code,sp_name').eq('id', c.salesperson_id).maybeSingle();
+    if(data && CUST && CUST.customer_id === c.customer_id){ CUST.rep_code = data.sp_code; CUST.rep_name = data.sp_name; renderCust(); }
+  }
+}
+function renderCust(){
+  const el = $('custChosen');
+  if(!CUST){ el.innerHTML = ''; return; }
+  const usd = CUST.currency_id && CUST.currency_id !== 'JMD';
+  el.innerHTML = '<div class="chosen"><b>' + esc(CUST.customer_id) + ' · ' + esc(CUST.customer_name) + '</b>' +
+    (CUST.shipping_zone ? '<span class="tag">' + esc(CUST.shipping_zone) + '</span>' : '') +
+    (CUST.sales_area ? '<span class="tag">' + esc(CUST.sales_area) + '</span>' : '') +
+    (CUST.rep_name || CUST.rep_code ? '<span class="tag">Rep ' + esc(CUST.rep_name || CUST.rep_code) + '</span>' : '') +
+    (usd ? '<span class="tag bad">' + esc(CUST.currency_id) + ' customer: key in Acumatica by hand</span>' : '') +
+    (CUST.customer_status && CUST.customer_status !== 'Active' ? '<span class="tag warn">' + esc(CUST.customer_status) + '</span>' : '') +
+    '<button class="x" id="custX">Change</button></div>';
+  $('custX').addEventListener('click', () => { CUST = null; renderCust(); validate(); $('custQ').focus(); });
+}
+
+// ---------- item search ----------
+async function packFor(ids){
+  if(!ids.length) return {};
+  const { data } = await sb.from('bg_item_pack').select('inventory_id,units_per_case,confirmed,source').in('inventory_id', ids);
+  return Object.fromEntries((data || []).map(p => [p.inventory_id, p]));
+}
+function toItem(p, pack){
+  return { id:p.inventory_id, description:p.description, price:Number(p.default_price), upc: pack ? pack.units_per_case : null, confirmed: !!(pack && pack.confirmed) };
+}
+async function searchItem(){
+  const q = safeQ($('itemQ').value);
+  const d = $('itemDrop');
+  if(q.length < 2){ d.classList.add('hidden'); return; }
+  const words = q.split(' ').filter(Boolean).slice(0, 4);
+  let qb = sb.from('bg_item_prices').select('inventory_id,description,default_price');
+  for(const w of words) qb = qb.or('inventory_id.ilike.%' + w + '%,description.ilike.%' + w + '%');
+  const { data, error } = await qb.order('description').limit(20);
+  d.classList.remove('hidden');
+  if(error){ d.innerHTML = '<div class="none">Search failed: ' + esc(error.message) + '</div>'; return; }
+  if(!data.length){ d.innerHTML = '<div class="none">No priced items match. Items without a default price cannot be entered.</div>'; return; }
+  const packs = await packFor(data.map(r => r.inventory_id));
+  for(const r of data) ITEMS.set(r.inventory_id, toItem(r, packs[r.inventory_id]));
+  d.innerHTML = data.map(r => {
+    const it = ITEMS.get(r.inventory_id);
+    return '<div class="opt" data-i="' + esc(r.inventory_id) + '"><b>' + esc(r.inventory_id) + '</b>' + esc(r.description) +
+      '<span class="r">' + fmt(it.price) + ' / case' + (it.confirmed ? ' · ' + it.upc + ' per case' : '') + '</span></div>';
+  }).join('');
+}
+function addItem(id){
+  const it = ITEMS.get(id); if(!it) return;
+  $('itemDrop').classList.add('hidden'); $('itemQ').value = '';
+  const dup = LINES.find(l => l.item.id === id && l.mode === 'CASE');
+  if(dup){ dup.qty = (Number(dup.qty) || 0) + 1; }
+  else LINES.push({ key: Math.random().toString(36).slice(2), item: it, mode: 'CASE', qty: 1, reason: $('reasonDef').value });
+  renderLines(); validate();
+  const last = document.querySelector('#lines tr[data-k="' + (dup ? dup.key : LINES[LINES.length - 1].key) + '"] input.qty');
+  if(last){ last.focus(); last.select(); }
+}
+
+// ---------- lines ----------
+function renderLines(){
+  const t = $('lines');
+  if(!LINES.length){ t.innerHTML = ''; $('totals').innerHTML = '<div class="empty" style="padding:6px 0">No items yet. Search above to add one.</div>'; return; }
+  let net = 0;
+  const rows = LINES.map(l => {
+    const c = calc(l);
+    if(c) net += c.ext;
+    const unitOk = l.item.confirmed;
+    const unitMissing = l.mode === 'UNIT' && !unitOk;
+    return '<tr data-k="' + l.key + '"><td class="item"><b>' + esc(l.item.id) + '</b> ' + esc(l.item.description) +
+      '<small>Case price ' + fmt(l.item.price) + (l.item.upc ? ' · ' + l.item.upc + ' per case' + (unitOk ? '' : ' (unconfirmed)') : ' · pack size unknown') + '</small></td>' +
+      '<td><select class="mode"><option value="CASE"' + (l.mode === 'CASE' ? ' selected' : '') + '>Cases</option><option value="UNIT"' + (l.mode === 'UNIT' ? ' selected' : '') + '>Units</option></select>' +
+        (unitMissing ? '<br><button class="btn ghost sm setpack" type="button" style="margin-top:4px">Set pack size</button>' : '') + '</td>' +
+      '<td><input class="qty" type="number" min="1" step="1" inputmode="numeric" value="' + esc(l.qty) + '"></td>' +
+      '<td class="l"><select class="reason">' + REASONS.map(r => '<option value="' + esc(r.code) + '"' + (r.code === l.reason ? ' selected' : '') + '>' + esc(r.label) + '</option>').join('') + '</select></td>' +
+      '<td>' + (c ? fmt(c.unit) : '<span class="tag warn">needs pack size</span>') + '</td>' +
+      '<td><b>' + (c ? fmt(c.ext) : '') + '</b></td>' +
+      '<td><button class="btn ghost sm rm" type="button" aria-label="Remove line">Remove</button></td></tr>';
+  }).join('');
+  t.innerHTML = '<thead><tr><th class="l">Item</th><th>Unit of entry</th><th>Qty</th><th class="l">Reason</th><th>75% price</th><th>Amount</th><th></th></tr></thead><tbody>' + rows + '</tbody>';
+  const gct = r2(net * GCT);
+  $('totals').innerHTML = '<div><small>Lines</small><b>' + LINES.length + '</b></div><div><small>Net (J$)</small><b>' + fmt(net) + '</b></div>' +
+    '<div><small>Est. GCT 15%</small><b>' + fmt(gct) + '</b></div><div><small>Est. credit (J$)</small><b>' + fmt(r2(net + gct)) + '</b></div>';
+}
+$('lines').addEventListener('change', e => {
+  const tr = e.target.closest('tr[data-k]'); if(!tr) return;
+  const l = LINES.find(x => x.key === tr.dataset.k); if(!l) return;
+  if(e.target.classList.contains('mode')) l.mode = e.target.value;
+  else if(e.target.classList.contains('qty')) l.qty = e.target.value;
+  else if(e.target.classList.contains('reason')) l.reason = e.target.value;
+  renderLines(); validate();
+});
+$('lines').addEventListener('click', async e => {
+  const tr = e.target.closest('tr[data-k]'); if(!tr) return;
+  const l = LINES.find(x => x.key === tr.dataset.k); if(!l) return;
+  if(e.target.closest('.rm')){ LINES = LINES.filter(x => x !== l); renderLines(); validate(); }
+  else if(e.target.closest('.setpack')){
+    const v = await askPack(l.item); if(v){ renderLines(); validate(); }
+  }
+});
+
+// Confirm (or correct) units per case for one item. Updates every line and search result using it.
+async function askPack(it){
+  const cur = it.upc || '';
+  const a = window.prompt('Units per case for ' + it.id + ' ' + it.description + '\n(How many units are in one case?)', cur);
+  if(a == null) return false;
+  const n = parseInt(a, 10);
+  if(!(n > 0) || String(n) !== a.trim()){ alert('Enter a whole number greater than 0.'); return false; }
+  const changed = n !== it.upc;
+  const row = { inventory_id: it.id, units_per_case: n, confirmed: true, updated_by: ME.id, updated_at: new Date().toISOString() };
+  if(changed) row.source = 'manual';
+  const { error } = await sb.from('bg_item_pack').upsert(row, { onConflict:'inventory_id' });
+  if(error){ alert("Couldn't save the pack size: " + error.message); return false; }
+  for(const x of [it, ITEMS.get(it.id), ...LINES.map(l => l.item).filter(i => i.id === it.id)]){ if(x){ x.upc = n; x.confirmed = true; } }
+  return true;
+}
+
+// ---------- submit ----------
+function problems(){
+  const p = [];
+  if(!CUST) p.push('Choose a customer.');
+  if(!$('slipDate').value) p.push('Enter the slip date.');
+  if(!LINES.length) p.push('Add at least one item.');
+  for(const l of LINES){
+    if(!(parseInt(l.qty, 10) > 0) || String(parseInt(l.qty, 10)) !== String(l.qty).trim()) { p.push(l.item.id + ': quantity must be a whole number above 0.'); break; }
+    if(l.mode === 'UNIT' && !l.item.confirmed){ p.push(l.item.id + ': set the pack size to enter units, or switch to cases.'); break; }
+  }
+  if(CUST && CUST.currency_id && CUST.currency_id !== 'JMD') p.push('USD customers are keyed in Acumatica by hand for now.');
+  return p;
+}
+function validate(){
+  const p = problems();
+  $('submitBtn').disabled = p.length > 0;
+  const m = $('msg'); m.className = 'msg'; m.textContent = LINES.length || CUST ? (p[0] || '') : '';
+}
+// With no typed slip number, the only duplicate signal is the content: same customer, same items and
+// quantities, same total, within the last 7 days (rejected slips ignored). A lookup failure never blocks.
+async function findDuplicate(net){
+  const since = new Date(Date.now() - 7 * 86400000).toISOString();
+  const { data: c, error } = await sb.from('bg_batches').select('id,bg_number,status,total_net,created_at')
+    .eq('customer_id', CUST.customer_id).neq('status', 'rejected').gte('created_at', since);
+  if(error || !c) return null;
+  const near = c.filter(b => Math.abs(Number(b.total_net) - net) < 0.015);
+  if(!near.length) return null;
+  const sig = LINES.map(l => l.item.id + '|' + l.mode + '|' + parseInt(l.qty, 10)).sort().join(',');
+  const { data: ls } = await sb.from('bg_lines').select('batch_id,inventory_id,uom,qty').in('batch_id', near.map(b => b.id));
+  for(const b of near){
+    const s = (ls || []).filter(l => l.batch_id === b.id).map(l => l.inventory_id + '|' + l.uom + '|' + Number(l.qty)).sort().join(',');
+    if(s === sig) return b;
+  }
+  return null;
+}
+async function submit(){
+  const p = problems(); if(p.length) return;
+  const btn = $('submitBtn'); btn.disabled = true;
+  const m = $('msg'); m.className = 'msg'; m.textContent = 'Checking…';
+  try{
+    const net = r2(LINES.reduce((s, l) => { const c = calc(l); return s + (c ? c.ext : 0); }, 0));
+    const dup = await findDuplicate(net);
+    if(dup && !window.confirm('This looks like a duplicate of ' + dup.bg_number + ' (' + dup.status + ', entered ' + when(dup.created_at) + '): same customer, same items and quantities, same total.\n\nSubmit it anyway?')){
+      m.textContent = 'Not submitted.'; btn.disabled = false; return;
+    }
+    m.textContent = 'Saving…';
+    const { data: b, error: be } = await sb.from('bg_batches').insert({
+      slip_date: $('slipDate').value, customer_id: CUST.customer_id, customer_name: CUST.customer_name,
+      currency_id: CUST.currency_id, shipping_zone: CUST.shipping_zone, sales_area: CUST.sales_area,
+      salesperson_code: CUST.rep_code, salesperson_name: CUST.rep_name,
+      entered_by_name: ME.name, entry_source: 'finance_test', status: 'draft', note: $('note').value.trim() || null
+    }).select('id,bg_number').single();
+    if(be) throw be;
+    const rows = LINES.map((l, i) => {
+      const lp = listPrice(l);
+      return { batch_id: b.id, line_no: i + 1, inventory_id: l.item.id, description: l.item.description,
+        uom: l.mode, qty: parseInt(l.qty, 10), list_price: lp, rate: RATE, reason_code: l.reason };
+    });
+    const { data: ls, error: le } = await sb.from('bg_lines').insert(rows).select('ext_price');
+    if(le){ await sb.from('bg_batches').delete().eq('id', b.id); throw le; }
+    const total = r2(ls.reduce((s, r) => s + Number(r.ext_price), 0));
+    const { error: ue } = await sb.from('bg_batches').update({ status:'submitted', total_net: total, submitted_at: new Date().toISOString() }).eq('id', b.id);
+    if(ue){ await sb.from('bg_batches').delete().eq('id', b.id); throw ue; }
+    await sb.from('bg_events').insert({ batch_id: b.id, actor_name: ME.name, event: 'submitted', detail: { lines: rows.length, total_net: total, source: 'finance_test' } });
+    m.className = 'msg ok'; m.textContent = 'Submitted as ' + b.bg_number + ' · J$ ' + fmt(total) + ' net.';
+    resetForm(true);
+  }catch(e){
+    m.className = 'msg err';
+    m.textContent = e.message || String(e);
+    btn.disabled = false;
+  }
+}
+function resetForm(keepMsg){
+  CUST = null; LINES = []; renderCust(); renderLines();
+  $('note').value = ''; $('slipDate').value = jmDate(new Date());
+  if(!keepMsg) $('msg').textContent = '';
+  $('submitBtn').disabled = true;
+}
+
+// ---------- pack sizes ----------
+async function loadPack(){
+  const q = safeQ($('packQ').value);
+  const t = $('packTbl'), msg = $('packMsg');
+  t.innerHTML = '<tbody><tr><td class="empty">Loading…</td></tr></tbody>'; msg.textContent = '';
+  let items = [], packs = {};
+  if(q.length >= 2){
+    let qb = sb.from('bg_item_prices').select('inventory_id,description,default_price');
+    for(const w of q.split(' ').slice(0, 4)) qb = qb.or('inventory_id.ilike.%' + w + '%,description.ilike.%' + w + '%');
+    const { data, error } = await qb.order('description').limit(60);
+    if(error){ t.innerHTML = '<tbody><tr><td class="empty">' + esc(error.message) + '</td></tr></tbody>'; return; }
+    items = data; packs = await packFor(items.map(r => r.inventory_id));
+  }else{
+    const { data: pk, error } = await sb.from('bg_item_pack').select('inventory_id,units_per_case,confirmed,source').eq('confirmed', false).order('inventory_id').limit(100);
+    if(error){ t.innerHTML = '<tbody><tr><td class="empty">' + esc(error.message) + '</td></tr></tbody>'; return; }
+    packs = Object.fromEntries(pk.map(p => [p.inventory_id, p]));
+    if(pk.length){
+      const { data } = await sb.from('bg_item_prices').select('inventory_id,description,default_price').in('inventory_id', pk.map(p => p.inventory_id));
+      items = (data || []).sort((a, b) => a.description.localeCompare(b.description));
+    }
+    msg.textContent = pk.length ? 'Showing ' + pk.length + ' unconfirmed suggestions.' : '';
+  }
+  if(!items.length){ t.innerHTML = '<tbody><tr><td class="empty">' + (q.length >= 2 ? 'No items match.' : 'Nothing waiting for confirmation.') + '</td></tr></tbody>'; return; }
+  t.innerHTML = '<thead><tr><th class="l">Item</th><th>Case price</th><th>Units per case</th><th>Status</th><th></th></tr></thead><tbody>' + items.map(r => {
+    const p = packs[r.inventory_id];
+    return '<tr data-i="' + esc(r.inventory_id) + '"><td class="item l"><b>' + esc(r.inventory_id) + '</b> ' + esc(r.description) + '</td><td>' + fmt(Number(r.default_price)) +
+      '</td><td><input class="qty pk" type="number" min="1" step="1" value="' + esc(p ? p.units_per_case : '') + '"></td>' +
+      '<td>' + (p && p.confirmed ? '<span class="tag ok">Confirmed</span>' : p ? '<span class="tag warn">Suggested</span>' : '<span class="tag">Not set</span>') + '</td>' +
+      '<td><button class="btn sm confirm" type="button">Confirm</button></td></tr>';
+  }).join('') + '</tbody>';
+  t._packs = packs;
+}
+$('packTbl').addEventListener('click', async e => {
+  const b = e.target.closest('.confirm'); if(!b) return;
+  const tr = b.closest('tr'); const id = tr.dataset.i;
+  const n = parseInt(tr.querySelector('.pk').value, 10);
+  if(!(n > 0)){ $('packMsg').className = 'msg err'; $('packMsg').textContent = 'Enter units per case (a whole number above 0).'; return; }
+  const prev = $('packTbl')._packs[id];
+  const row = { inventory_id: id, units_per_case: n, confirmed: true, updated_by: ME.id, updated_at: new Date().toISOString() };
+  if(!prev || prev.units_per_case !== n) row.source = 'manual';
+  b.disabled = true;
+  const { error } = await sb.from('bg_item_pack').upsert(row, { onConflict:'inventory_id' });
+  if(error){ b.disabled = false; $('packMsg').className = 'msg err'; $('packMsg').textContent = error.message; return; }
+  $('packMsg').className = 'msg ok'; $('packMsg').textContent = id + ' confirmed at ' + n + ' per case.';
+  const it = ITEMS.get(id); if(it){ it.upc = n; it.confirmed = true; }
+  $('packTbl')._packs[id] = { inventory_id:id, units_per_case:n, confirmed:true };
+  tr.children[3].innerHTML = '<span class="tag ok">Confirmed</span>';
+  b.disabled = false;
+});
+
+// ---------- wiring ----------
+$('custQ').addEventListener('input', debounce(searchCust, 250));
+$('custDrop').addEventListener('mousedown', e => { const o = e.target.closest('.opt[data-c]'); if(o) chooseCust($('custDrop')._rows[o.dataset.c]); });
+$('itemQ').addEventListener('input', debounce(searchItem, 250));
+$('itemDrop').addEventListener('mousedown', e => { const o = e.target.closest('.opt[data-i]'); if(o) addItem(o.dataset.i); });
+document.addEventListener('click', e => {
+  if(!e.target.closest('.srch')){ $('custDrop').classList.add('hidden'); $('itemDrop').classList.add('hidden'); }
+});
+$('slipDate').addEventListener('input', validate);
+$('reasonDef').addEventListener('change', () => { LINES.forEach(l => l.reason = $('reasonDef').value); renderLines(); });
+$('clearBtn').addEventListener('click', () => { if(!LINES.length && !CUST || confirm('Clear this slip?')) resetForm(); });
+$('submitBtn').addEventListener('click', submit);
+$('packQ').addEventListener('input', debounce(loadPack, 300));
+// New slip / Pack sizes are two views of this page, picked by the URL hash so the sub-tabs behave like links.
+function showTab(){
+  const tab = location.hash === '#pack' ? 'pack' : 'new';
+  for(const a of $('tabs').querySelectorAll('.sub a[data-tab]')) a.classList.toggle('on', a.dataset.tab === tab);
+  for(const id of ['new', 'pack']) $('tab-' + id).classList.toggle('hidden', id !== tab);
+  $('ptitle').textContent = { new:'New slip (test entry)', pack:'Pack sizes' }[tab];
+  $('banner').classList.toggle('hidden', tab !== 'new');
+  if(tab === 'pack') loadPack();
+}
+window.addEventListener('hashchange', showTab);
+window.addEventListener('beforeunload', e => { if(LINES.length){ e.preventDefault(); e.returnValue = ''; } });
+
+async function init(){
+  showTab();
+  $('slipDate').value = jmDate(new Date());
+  const [{ data: s }, { data: rc }] = await Promise.all([
+    sb.from('bg_settings').select('rate').single(),
+    sb.from('bg_reason_codes').select('code,label').eq('active', true).order('sort')
+  ]);
+  if(s) RATE = Number(s.rate);
+  REASONS = rc || [{ code:'DAMAGED', label:'Damaged' }];
+  $('reasonDef').innerHTML = REASONS.map(r => '<option value="' + esc(r.code) + '">' + esc(r.label) + '</option>').join('');
+  $('psub').textContent = 'Price at ' + Math.round(RATE * 100) + '% of the Acumatica default price. Entered by ' + ME.name + '.';
+  renderLines();
+}
+
+// ---------- sign-in (same as the AR pages) ----------
+const MS_LOGO = '<svg width="18" height="18" viewBox="0 0 21 21" aria-hidden="true"><path fill="#f25022" d="M1 1h9v9H1z"/><path fill="#7fba00" d="M11 1h9v9h-9z"/><path fill="#00a4ef" d="M1 11h9v9H1z"/><path fill="#ffb900" d="M11 11h9v9h-9z"/></svg>';
+function gate(html){ $('app').classList.add('hidden'); $('tabs').classList.add('hidden'); $('gate').classList.remove('hidden'); $('gate').innerHTML = html; }
+async function signIn(){
+  const { error } = await sb.auth.signInWithOAuth({ provider:'azure', options:{ scopes:'email openid profile', redirectTo: location.origin + location.pathname } });
+  if(error) alert("Couldn't start sign-in: " + error.message);
+}
+async function signOut(){ await sb.auth.signOut(); location.reload(); }
+$('signout').addEventListener('click', signOut);
+async function start(){
+  const { data:{ session } } = await sb.auth.getSession();
+  if(!session){
+    gate('<h2>Bad Goods</h2><p>Sign in with your DFL Microsoft account.</p><button class="btn ms" id="signin">' + MS_LOGO + 'Sign in with Microsoft</button>');
+    $('signin').addEventListener('click', signIn); return;
+  }
+  $('signout').classList.remove('hidden'); $('who').textContent = session.user.email || '';
+  const { data: access, error } = await sb.rpc('ar_my_access');
+  if(error || !access || !access.level){
+    gate('<h2>No access</h2><p>You are signed in as <b>' + esc(session.user.email) + '</b>, but this account is not set up for Bad Goods. Ask IT Support to add you.</p><button class="btn" id="so">Sign out</button>');
+    $('so').addEventListener('click', signOut); return;
+  }
+  ME = { id: session.user.id, name: access.name || session.user.email, level: access.level };
+  $('who').textContent = ME.name + ' · ' + ME.level.replace('_', ' ');
+  $('gate').classList.add('hidden'); $('app').classList.remove('hidden'); $('tabs').classList.remove('hidden');
+  init();
+}
+start();
+})();
+</script>
+</body>
+</html>
