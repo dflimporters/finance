@@ -906,9 +906,9 @@ function setupRepSelect(){
 
 function showFreshness(){
   const ageDays = (Date.now() - new Date(SNAP.completed_at).getTime()) / 86400000;
-  $('asof').textContent = 'Aged as of ' + SNAP.snapshot_date + ' · updated ' + when(SNAP.completed_at) + ' · refreshed every Monday and Thursday';
+  $('asof').textContent = 'Aged as of ' + SNAP.snapshot_date + ' · updated ' + when(SNAP.completed_at) + ' · refreshed daily';
   let html = '';
-  if(ageDays > 4) html += '<div class="banner stale">This data is ' + Math.floor(ageDays) + ' days old. The Monday/Thursday refresh may have failed — please tell IT Support.</div>';
+  if(ageDays > 2) html += '<div class="banner stale">This data is ' + Math.floor(ageDays) + ' days old. The daily refresh may have failed — please tell IT Support.</div>';
   try {
     const k = 'ar_seen_snapshot_' + PROFILE.id, seen = Number(localStorage.getItem(k) || 0);
     if(seen && seen < SNAP.id) html += '<div class="banner fresh">New numbers since your last visit — updated ' + esc(when(SNAP.completed_at)) + '.</div>';
