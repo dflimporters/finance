@@ -452,8 +452,8 @@ $('refreshBtn').addEventListener('click', () => load(true));
 $('csvBtn').addEventListener('click', exportCsv);
 
 function init(){
-  CAN = ME.level === 'invoice_clerk';
-  $('mainTabs').classList.toggle('hidden', CAN);   // the invoice clerk has no access to the other finance pages
+  CAN = ME.level === 'invoice_clerk' || ME.level === 'admin';   // admin can edit too (for testing)
+  $('mainTabs').classList.toggle('hidden', ME.level === 'invoice_clerk');   // the invoice clerk has no access to the other finance pages
   $('quick').classList.toggle('hidden', !CAN); $('roBanner').classList.toggle('hidden', CAN);
   const [f, t] = presetRange('90'); $('fFrom').value = f; $('fTo').value = t;
   load(true);
