@@ -182,7 +182,7 @@ const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = se
 const PAGE = 100;
 const COLS = 'reference_number,customer_id,customer_name,invoice_amount,currency_id,invoice_date,acu_status,order_number,branch,synced_at,check_status,note,checked_by_name,checked_at';
 
-let ME = null, CAN = false;   // CAN: only the invoice_clerk level can mark; everyone else with finance access is view only
+let ME = null, CAN = false;   // CAN: only invoice_clerk and admin can mark; everyone else with finance access is view only
 let ALL = [];                 // every invoice in the loaded date range
 let VIEW = [];                // after filters and sort
 let TAB = 'unchecked';        // unchecked | missing | found | all
@@ -420,8 +420,6 @@ $('tbl').addEventListener('click', async e => {
   const cb = e.target.closest('button[data-cust]');
   if(cb){ $('fView').value = 'inv'; $('fQ').value = cb.dataset.cust; TAB = 'all'; refilter(); return; }
   if(e.target.id === 'selAll'){ VIEW.slice(PG * PAGE, PG * PAGE + PAGE).forEach(r => e.target.checked ? SEL.add(r.reference_number) : SEL.delete(r.reference_number)); renderTable(); renderBar(); return; }
-  if(e.target.id === 'pPrev'){ PG--; renderTable(); window.scrollTo({ top:0 }); return; }
-  if(e.target.id === 'pNext'){ PG++; renderTable(); window.scrollTo({ top:0 }); return; }
   const tr = e.target.closest('tr.r[data-ref]'); if(!tr) return;
   const ref = tr.dataset.ref;
   if(e.target.classList.contains('sel')){ e.target.checked ? SEL.add(ref) : SEL.delete(ref); tr.classList.toggle('sel', SEL.has(ref)); renderBar(); return; }
@@ -430,6 +428,12 @@ $('tbl').addEventListener('click', async e => {
     const r = ALL.find(x => x.reference_number === ref), want = mk.dataset.mark;
     if(await mark([ref], st(r) === want ? 'clear' : want)){ refilterKeepPage(); }
   }
+});
+// The pager lives in the footer bar (#sum), outside the table, so it needs its own handler.
+$('sum').addEventListener('click', e => {
+  const b = e.target.closest('button'); if(!b || b.disabled) return;
+  if(b.id === 'pPrev') PG = Math.max(0, PG - 1); else if(b.id === 'pNext') PG++; else return;
+  renderTable(); window.scrollTo({ top:0 });
 });
 function refilterKeepPage(){ const p = PG; refilter(); PG = Math.min(p, Math.max(0, Math.ceil(VIEW.length / PAGE) - 1)); renderTable(); }
 $('tbl').addEventListener('change', e => { if(e.target.classList.contains('note')){ const tr = e.target.closest('tr[data-ref]'); saveNote(tr.dataset.ref, e.target.value); } });
