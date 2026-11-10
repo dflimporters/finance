@@ -1,0 +1,488 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0D1B3E">
+<title>DFL · Missing Invoices</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&family=Open+Sans:wght@400;600&display=swap" rel="stylesheet">
+<!--
+  Missing Invoices. A finance clerk goes through the stack of physical invoices and marks each one Found or Missing,
+  with a note. The invoice list (number, customer, amount, currency, date, status) is public.invoices, synced from
+  Acumatica, read through the view mi_invoices. The clerk's marks live in public.mi_checks (no row = not checked yet).
+  Anyone with AR access (admin, finance_admin, clerk: ar_sees_all()) can view and mark; RLS enforces it.
+  The page loads one date range at a time (a month is a few thousand rows) and filters, sorts and totals in the browser.
+  "Quick mark" is for working through a physical stack: type or scan an invoice number, press Enter.
+-->
+<style>
+:root{
+  --navy:#0D1B3E; --navy2:#1a2e5a; --blue:#326BD3; --blue-t:#E8EFFB;
+  --bg:#F5F7FA; --card:#FFFFFF; --line:#E1E6EF;
+  --ink:#1A2340; --ink2:#4A5578; --ink3:#8A95B0;
+  --green:#1A8F4C; --green-t:#E6F4EC; --red:#D63B3B; --red-t:#FBE9E9; --amber-t:#FFF2D6;
+  --hf:"Montserrat",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --bf:"Open Sans",system-ui,-apple-system,"Segoe UI",sans-serif;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--bf)}
+.hidden{display:none!important}
+.topbar{background:var(--navy);color:#fff;display:flex;align-items:center;gap:12px;padding:10px 16px}
+.topbar img{height:30px}.topbar #who{margin-left:auto;font-size:13px;color:#C9D4EE}
+.tabs{background:var(--navy2);display:flex;gap:2px;padding:0 16px;overflow-x:auto}
+.tabs a{color:#C9D4EE;text-decoration:none;font:700 12px var(--hf);letter-spacing:.04em;padding:10px 16px;border-bottom:3px solid transparent;white-space:nowrap}
+.tabs a:hover{color:#fff}.tabs a.on{color:#fff;border-bottom-color:#F2D64B}
+.btn{font:700 12px var(--hf);letter-spacing:.04em;background:var(--blue);color:#fff;border:0;border-radius:6px;height:40px;padding:0 16px;cursor:pointer;white-space:nowrap}
+.btn.ghost{background:#fff;color:var(--blue);border:1px solid var(--blue)}
+.btn.danger{background:var(--red)}.btn.green{background:var(--green)}
+.btn.small{height:32px;padding:0 12px;font-size:11px;background:transparent;color:#fff;border:1px solid #6F82B3}
+.btn.sm{height:30px;padding:0 12px;font-size:11px}
+.btn:disabled{opacity:.5;cursor:default}
+.gate{max-width:420px;margin:70px auto;background:#fff;border:1px solid var(--line);border-radius:10px;padding:28px;text-align:center}
+.gate h2{font:800 20px var(--hf);margin:0 0 8px}.gate p{color:var(--ink2);margin:0 0 18px}
+.gate .ms{display:inline-flex;align-items:center;gap:10px;padding:0 18px}
+.page{max-width:1560px;margin:0 auto;padding:20px 16px 110px}
+.ptitle{font:800 22px var(--hf);margin:0 0 2px}
+.psub{color:var(--ink2);margin:0 0 14px;font-size:13px}
+.banner{border-radius:8px;padding:10px 14px;margin-bottom:12px;font-size:13px;background:var(--blue-t);border:1px solid #c9d8f5;color:var(--navy2)}
+.strip{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:8px;margin-bottom:12px}
+.kpi{background:var(--navy2);color:#fff;border-radius:10px;padding:12px 14px;min-width:0}
+.kpi .l{font:600 10px var(--hf);text-transform:uppercase;letter-spacing:.09em;color:#9FB0D6}
+.kpi .v{font:700 20px var(--hf);font-variant-numeric:tabular-nums}
+.kpi .d{font-size:11.5px;color:#9FB0D6;min-height:17px}
+.kpi.warn{border-top:4px solid #F2D64B}.kpi.hot{border-top:4px solid #E5534B}.kpi.ok{border-top:4px solid #3fb57a}
+.bar{height:6px;background:#2d4378;border-radius:3px;overflow:hidden;margin-top:6px}.bar i{display:block;height:100%;background:#3fb57a}
+.quick{display:flex;gap:10px;align-items:center;flex-wrap:wrap;background:var(--blue-t);border:1px solid #c9d8f5;border-radius:8px;padding:10px 14px;margin-bottom:12px}
+.quick b{font:700 12px var(--hf);color:var(--navy2);text-transform:uppercase;letter-spacing:.06em}
+.quick .inp{min-width:220px;font-size:15px;height:40px}
+.quick .seg button{height:40px}
+.qmsg{font-size:13px;font-weight:600}.qmsg.ok{color:#13693a}.qmsg.err{color:#8a1f1f}
+.seg{display:inline-flex}.seg button{font:700 12px var(--hf);background:#fff;color:var(--ink2);border:1px solid #CBD3E1;padding:0 14px;height:36px;cursor:pointer}
+.seg button:first-child{border-radius:6px 0 0 6px}.seg button:last-child{border-radius:0 6px 6px 0;border-left:0}
+.seg button.on{background:var(--blue);color:#fff;border-color:var(--blue)}
+.stabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px;align-items:center}
+.stabs button{font:700 12px var(--hf);background:#fff;color:var(--ink2);border:1px solid #CBD3E1;border-radius:20px;padding:7px 14px;cursor:pointer}
+.stabs button.on{background:var(--blue);color:#fff;border-color:var(--blue)}
+.stabs button small{font:600 11px var(--hf);opacity:.8;margin-left:4px}
+.stabs .sp{margin-left:auto}
+.panel{background:var(--card);border:1px solid var(--line);border-radius:8px;margin-bottom:16px}
+.fbar{display:flex;flex-wrap:wrap;gap:10px;align-items:end;padding:12px 14px;border-bottom:1px solid var(--line)}
+.lbl{display:grid;gap:3px;font:600 10.5px var(--hf);color:var(--ink2);text-transform:uppercase;letter-spacing:.06em}
+.inp{height:36px;border:1px solid #CBD3E1;border-radius:6px;padding:0 9px;font:14px var(--bf);background:#fff;color:var(--ink);text-transform:none;letter-spacing:0;min-width:130px;max-width:100%}
+.inp.num{width:110px;min-width:0}
+.chips{display:flex;gap:6px;flex-wrap:wrap;padding:10px 14px 0}
+.chips button{font:600 11px var(--hf);background:#EEF1F7;border:0;border-radius:12px;padding:4px 10px;cursor:pointer;color:var(--ink2)}
+.chips button.on{background:var(--navy2);color:#fff}
+.scroll{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}
+th{font:700 10.5px var(--hf);text-transform:uppercase;letter-spacing:.06em;color:var(--ink2);text-align:right;padding:8px 10px;background:#F0F3F8;white-space:nowrap}
+th.sortable{cursor:pointer;user-select:none}th.sortable:hover{color:var(--blue)}
+td{padding:7px 10px;text-align:right;border-top:1px solid var(--line);vertical-align:middle}
+th.l,td.l{text-align:left}
+td.c,th.c{text-align:center;width:34px}
+tr.r:hover td{background:#F7F9FD}
+tr.r.sel td{background:#EAF1FD}
+tr.r.is-found td:first-child{box-shadow:inset 4px 0 0 var(--green)}
+tr.r.is-missing td:first-child{box-shadow:inset 4px 0 0 var(--red)}
+tr.r.is-missing td{background:#FFF8F8}
+.cust b{font:700 13px var(--hf)}.cust small{display:block;color:var(--ink3);font-size:11.5px}
+.ref{font:700 13px var(--hf)}
+.mk{display:inline-flex}.mk button{font:700 11px var(--hf);border:1px solid #CBD3E1;background:#fff;color:var(--ink2);height:30px;padding:0 11px;cursor:pointer}
+.mk button:first-child{border-radius:6px 0 0 6px}.mk button:last-child{border-radius:0 6px 6px 0;border-left:0}
+.mk button.f.on{background:var(--green);color:#fff;border-color:var(--green)}
+.mk button.m.on{background:var(--red);color:#fff;border-color:var(--red)}
+.note{width:100%;min-width:180px;height:30px;border:1px solid #CBD3E1;border-radius:6px;padding:0 8px;font:13px var(--bf)}
+.note:disabled{background:#F5F7FA;color:var(--ink3)}
+.who{font-size:11.5px;color:var(--ink3);white-space:nowrap}
+.tag{display:inline-block;font:700 10px var(--hf);background:#E8EFFB;color:var(--blue);border-radius:4px;padding:0 6px;line-height:18px}
+.tag.warn{background:var(--amber-t);color:#6b4b00}
+.age.warn{color:#9a6200;font-weight:600}.age.hot{color:#B3261E;font-weight:700}
+.empty{padding:30px;text-align:center;color:var(--ink3)}
+.msg{font-size:13px}.msg.err{color:#8a1f1f}.msg.ok{color:#13693a}
+.foot{color:var(--ink3);font-size:12px;margin-top:6px}
+.sum{display:flex;gap:12px;padding:10px 14px;border-top:1px solid var(--line);background:#FBFCFE;justify-content:space-between;flex-wrap:wrap;align-items:center}
+.sum small{color:var(--ink3);font:600 11px var(--hf)}
+.pager{display:flex;gap:6px;align-items:center}
+.abar{position:fixed;left:0;right:0;bottom:0;background:var(--navy);color:#fff;padding:10px 16px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;z-index:40;box-shadow:0 -4px 18px rgba(13,27,62,.3)}
+.abar .info{margin-right:auto;font:600 13px var(--bf)}
+.abar .btn.ghost{background:transparent;color:#fff;border-color:#6F82B3}
+@media (max-width:1000px){.strip{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media (max-width:640px){.page{padding:14px 10px 120px}.inp{min-width:0;width:100%}.lbl{flex:1 1 45%}.quick .inp{min-width:0;flex:1 1 100%}}
+</style>
+</head>
+<body>
+<header>
+<div class="topbar"><img src="https://hzagwndglwhcepsirafi.supabase.co/storage/v1/object/public/Assets/DFL%20Logo%20Blue_White.png" alt="DFL Importers"><span id="who"></span><button class="btn small hidden" id="signout">Sign out</button></div>
+<nav class="tabs" id="mainTabs" aria-label="Finance sections"><a href="../index.html">Aging</a><a href="../collections.html">Collections</a><a href="../bad-goods/queue.html">Bad Goods</a><a class="on" href="index.html">Missing Invoices</a></nav>
+</header>
+<div class="gate hidden" id="gate"></div>
+
+<div class="page hidden" id="app">
+  <h1 class="ptitle">Missing invoices</h1>
+  <p class="psub" id="psub">Loading…</p>
+
+  <div class="banner hidden" id="roBanner">View only: marking invoices Found or Missing is done by the invoice clerk.</div>
+  <div class="strip" id="kpis"></div>
+
+  <div class="quick" id="quick">
+    <b>Quick mark</b>
+    <input id="qIn" class="inp" type="text" placeholder="Type or scan invoice number, press Enter" autocomplete="off" spellcheck="false">
+    <div class="seg" id="qMode" role="group" aria-label="Quick mark as"><button data-m="found" class="on" type="button">Found</button><button data-m="missing" type="button">Missing</button></div>
+    <span class="qmsg" id="qMsg"></span>
+  </div>
+
+  <div class="stabs" id="stabs"></div>
+
+  <div class="panel">
+    <div class="chips" id="presets"></div>
+    <div class="fbar">
+      <label class="lbl">Search <input id="fQ" class="inp" type="search" placeholder="Invoice, customer, ID or note"></label>
+      <label class="lbl">Invoice date from <input id="fFrom" class="inp" type="date"></label>
+      <label class="lbl">to <input id="fTo" class="inp" type="date"></label>
+      <label class="lbl">Currency <select id="fCur" class="inp"><option value="">All</option></select></label>
+      <label class="lbl">Acumatica status <select id="fAcu" class="inp"><option value="">All</option></select></label>
+      <label class="lbl">Branch <select id="fBr" class="inp"><option value="">All</option></select></label>
+      <label class="lbl">Amount min <input id="fMin" class="inp num" type="number" min="0" step="100" inputmode="decimal"></label>
+      <label class="lbl">max <input id="fMax" class="inp num" type="number" min="0" step="100" inputmode="decimal"></label>
+      <label class="lbl">Older than (days) <input id="fAge" class="inp num" type="number" min="0" inputmode="numeric"></label>
+      <label class="lbl">Note <select id="fNote" class="inp"><option value="">Any</option><option value="y">Has a note</option><option value="n">No note</option></select></label>
+      <label class="lbl">Checked by <select id="fBy" class="inp"><option value="">Anyone</option></select></label>
+      <label class="lbl">View <select id="fView" class="inp"><option value="inv">Invoices</option><option value="cust">By customer</option></select></label>
+      <button class="btn ghost sm" id="fClear" type="button">Clear</button>
+      <button class="btn ghost sm" id="refreshBtn" type="button">Refresh</button>
+      <button class="btn ghost sm" id="csvBtn" type="button">Export CSV</button>
+    </div>
+    <div class="scroll"><table id="tbl"></table></div>
+    <div class="sum" id="sum"></div>
+  </div>
+  <p class="foot" id="foot"></p>
+</div>
+
+<div class="abar hidden" id="abar"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+(function(){
+"use strict";
+const $ = id => document.getElementById(id);
+const sb = supabase.createClient('https://hzagwndglwhcepsirafi.supabase.co', 'sb_publishable_5rAinfDT1K9kwEQnqYwlOA_-C5tk_6h', {
+  auth: { persistSession:true, autoRefreshToken:true, detectSessionInUrl:true, flowType:'pkce', storageKey:'dfl-ar-aging-auth' }
+});
+const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const fmt = n => Number(n || 0).toLocaleString('en-US', { minimumFractionDigits:2, maximumFractionDigits:2 });
+const fmt0 = n => Math.round(Number(n) || 0).toLocaleString('en-US');
+const jmDate = d => new Intl.DateTimeFormat('en-CA', { timeZone:'America/Jamaica' }).format(d);
+const TODAY = jmDate(new Date());
+const addDays = (iso, n) => { const d = new Date(iso + 'T00:00:00Z'); d.setUTCDate(d.getUTCDate() + n); return d.toISOString().slice(0, 10); };
+const dShort = s => s ? new Date(s.slice(0, 10) + 'T00:00:00').toLocaleDateString('en-GB', { day:'numeric', month:'short', year:'numeric' }) : '';
+const when = iso => iso ? new Date(iso).toLocaleString('en-GB', { timeZone:'America/Jamaica', day:'numeric', month:'short', hour:'numeric', minute:'2-digit', hour12:true }) : '';
+const ageOf = d => Math.max(0, Math.round((Date.parse(TODAY + 'T00:00:00Z') - Date.parse(String(d).slice(0, 10) + 'T00:00:00Z')) / 86400000));
+const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
+const PAGE = 100;
+const COLS = 'reference_number,customer_id,customer_name,invoice_amount,currency_id,invoice_date,acu_status,order_number,branch,synced_at,check_status,note,checked_by_name,checked_at';
+
+let ME = null, CAN = false;   // CAN: only the invoice_clerk level can mark; everyone else with finance access is view only
+let ALL = [];                 // every invoice in the loaded date range
+let VIEW = [];                // after filters and sort
+let TAB = 'unchecked';        // unchecked | missing | found | all
+let SORT = { key:'reference_number', dir:1 };
+let PG = 0, QMODE = 'found', LOADING = false, LOADED_RANGE = '';
+const SEL = new Set();
+const MAXPAGES = 60;
+
+const st = r => r.check_status || 'unchecked';
+const fmtAmt = r => fmt(r.invoice_amount) + (r.currency_id && r.currency_id !== 'JMD' ? ' ' + r.currency_id : '');
+function say(t, cls){ const el = $('psub'); el.textContent = t; el.className = 'psub msg ' + (cls || ''); }
+function qsay(t, cls){ const el = $('qMsg'); el.textContent = t; el.className = 'qmsg ' + (cls || ''); }
+
+// ---------- date range ----------
+const PRESETS = [['7', 'Last 7 days'], ['30', 'Last 30 days'], ['90', 'Last 3 months'], ['thism', 'This month'], ['lastm', 'Last month'], ['ytd', 'This year'], ['all', 'All dates']];
+function presetRange(k){
+  const y = TODAY.slice(0, 4), m = TODAY.slice(5, 7);
+  if(k === '7') return [addDays(TODAY, -6), TODAY];
+  if(k === '30') return [addDays(TODAY, -29), TODAY];
+  if(k === '90') return [addDays(TODAY, -89), TODAY];
+  if(k === 'thism') return [y + '-' + m + '-01', TODAY];
+  if(k === 'lastm'){ const first = y + '-' + m + '-01', end = addDays(first, -1); return [end.slice(0, 8) + '01', end]; }
+  if(k === 'ytd') return [y + '-01-01', TODAY];
+  return ['', ''];
+}
+function renderPresets(){
+  const cur = $('fFrom').value + '|' + $('fTo').value;
+  $('presets').innerHTML = PRESETS.map(([k, l]) => '<button type="button" data-p="' + k + '" class="' + (presetRange(k).join('|') === cur ? 'on' : '') + '">' + l + '</button>').join('');
+}
+
+// ---------- loading ----------
+async function load(force){
+  const range = $('fFrom').value + '|' + $('fTo').value;
+  if(LOADING) return;
+  if(!force && range === LOADED_RANGE) { refilter(); return; }
+  LOADING = true; $('tbl').innerHTML = '<tbody><tr><td class="empty">Loading invoices…</td></tr></tbody>';
+  try{
+    const rows = [];
+    for(let p = 0; p < MAXPAGES; p++){
+      let q = sb.from('mi_invoices').select(COLS).order('reference_number', { ascending:true }).range(p * 1000, p * 1000 + 999);
+      if($('fFrom').value) q = q.gte('invoice_date', $('fFrom').value);
+      if($('fTo').value) q = q.lte('invoice_date', $('fTo').value);
+      const { data, error } = await q;
+      if(error) throw error;
+      rows.push(...data);
+      if(data.length < 1000) break;
+      say('Loading… ' + fmt0(rows.length) + ' invoices so far');
+    }
+    ALL = rows; LOADED_RANGE = range; SEL.clear(); PG = 0;
+    fillOptions(); refilter();
+  }catch(e){
+    $('tbl').innerHTML = '<tbody><tr><td class="empty">Could not load: ' + esc(e.message || e) + '</td></tr></tbody>';
+  }finally{ LOADING = false; }
+}
+function fillOptions(){
+  const uniq = k => [...new Set(ALL.map(r => r[k]).filter(Boolean))].sort((a, b) => String(a).localeCompare(String(b)));
+  const set = (id, vals, first) => { const el = $(id), cur = el.value; el.innerHTML = '<option value="">' + first + '</option>' + vals.map(v => '<option>' + esc(v) + '</option>').join(''); el.value = vals.includes(cur) ? cur : ''; };
+  set('fCur', uniq('currency_id'), 'All'); set('fAcu', uniq('acu_status'), 'All'); set('fBr', uniq('branch'), 'All'); set('fBy', uniq('checked_by_name'), 'Anyone');
+}
+
+// ---------- filter + sort ----------
+function baseFilter(){
+  const q = $('fQ').value.trim().toLowerCase(), cur = $('fCur').value, acu = $('fAcu').value, br = $('fBr').value, by = $('fBy').value, nt = $('fNote').value;
+  const mn = $('fMin').value, mx = $('fMax').value, age = $('fAge').value;
+  return ALL.filter(r => {
+    if(q && !((r.reference_number || '') + ' ' + (r.customer_name || '') + ' ' + (r.customer_id || '') + ' ' + (r.note || '') + ' ' + (r.order_number || '')).toLowerCase().includes(q)) return false;
+    if(cur && r.currency_id !== cur) return false;
+    if(acu && r.acu_status !== acu) return false;
+    if(br && r.branch !== br) return false;
+    if(by && r.checked_by_name !== by) return false;
+    if(nt === 'y' && !r.note) return false; if(nt === 'n' && r.note) return false;
+    if(mn !== '' && Number(r.invoice_amount) < Number(mn)) return false;
+    if(mx !== '' && Number(r.invoice_amount) > Number(mx)) return false;
+    if(age !== '' && ageOf(r.invoice_date) <= Number(age)) return false;
+    return true;
+  });
+}
+function cmp(a, b){
+  const k = SORT.key; let x = a[k], y = b[k];
+  if(k === 'invoice_amount') { x = Number(x); y = Number(y); }
+  else if(k === 'age'){ x = a.invoice_date || ''; y = b.invoice_date || ''; return SORT.dir * -(x < y ? -1 : x > y ? 1 : 0); }
+  else if(k === 'check_status'){ x = st(a); y = st(b); }
+  else { x = x == null ? '' : x; y = y == null ? '' : y; if(typeof x === 'string') return SORT.dir * x.localeCompare(y, undefined, { numeric:true, sensitivity:'base' }); }
+  return SORT.dir * (x < y ? -1 : x > y ? 1 : 0);
+}
+let BASE = [];
+function refilter(){
+  BASE = baseFilter();
+  VIEW = (TAB === 'all' ? BASE : BASE.filter(r => st(r) === TAB));
+  if($('fView').value === 'inv') VIEW = VIEW.slice().sort(cmp);
+  for(const ref of [...SEL]) if(!VIEW.some(r => r.reference_number === ref)) SEL.delete(ref);
+  if(PG * PAGE >= VIEW.length) PG = 0;
+  renderAll();
+}
+
+// ---------- render ----------
+function money(rows){
+  const m = {}; for(const r of rows){ const c = r.currency_id || 'JMD'; m[c] = (m[c] || 0) + Number(r.invoice_amount || 0); }
+  return Object.keys(m).sort().map(c => c + ' ' + fmt0(m[c])).join(' · ') || '—';
+}
+function renderKpis(){
+  const n = { found:0, missing:0, unchecked:0 }; BASE.forEach(r => n[st(r)]++);
+  const tot = BASE.length, done = n.found + n.missing, pct = tot ? Math.round(done * 100 / tot) : 0;
+  const miss = BASE.filter(r => st(r) === 'missing');
+  $('kpis').innerHTML =
+    '<div class="kpi"><div class="l">Invoices in range</div><div class="v">' + fmt0(tot) + '</div><div class="d">' + esc(money(BASE)) + '</div></div>' +
+    '<div class="kpi ' + (pct === 100 ? 'ok' : 'warn') + '"><div class="l">Checked</div><div class="v">' + pct + '%</div><div class="d">' + fmt0(done) + ' of ' + fmt0(tot) + '</div><div class="bar"><i style="width:' + pct + '%"></i></div></div>' +
+    '<div class="kpi ok"><div class="l">Found</div><div class="v">' + fmt0(n.found) + '</div><div class="d">' + esc(money(BASE.filter(r => st(r) === 'found'))) + '</div></div>' +
+    '<div class="kpi ' + (n.missing ? 'hot' : '') + '"><div class="l">Missing</div><div class="v">' + fmt0(n.missing) + '</div><div class="d">' + esc(money(miss)) + '</div></div>' +
+    '<div class="kpi ' + (n.unchecked ? 'warn' : 'ok') + '"><div class="l">Still to check</div><div class="v">' + fmt0(n.unchecked) + '</div><div class="d">' + esc(money(BASE.filter(r => st(r) === 'unchecked'))) + '</div></div>';
+}
+function renderTabs(){
+  const n = { found:0, missing:0, unchecked:0 }; BASE.forEach(r => n[st(r)]++);
+  const T = [['unchecked', 'To check', n.unchecked], ['missing', 'Missing', n.missing], ['found', 'Found', n.found], ['all', 'All', BASE.length]];
+  $('stabs').innerHTML = T.map(([k, l, c]) => '<button data-s="' + k + '" class="' + (k === TAB ? 'on' : '') + '">' + l + '<small>' + fmt0(c) + '</small></button>').join('');
+}
+function arrow(k){ return SORT.key === k ? (SORT.dir > 0 ? ' ▲' : ' ▼') : ''; }
+function renderTable(){
+  const t = $('tbl');
+  if($('fView').value === 'cust') return renderCust();
+  if(!VIEW.length){ t.innerHTML = '<tbody><tr><td class="empty">' + (TAB === 'unchecked' && BASE.length ? 'Nothing left to check with these filters.' : 'No invoices match.') + '</td></tr></tbody>'; $('sum').innerHTML = ''; return; }
+  const page = VIEW.slice(PG * PAGE, PG * PAGE + PAGE);
+  const allSel = page.every(r => SEL.has(r.reference_number));
+  const th = (k, l, cls) => '<th class="sortable ' + (cls || '') + '" data-sort="' + k + '">' + l + arrow(k) + '</th>';
+  const head = '<thead><tr>' + (CAN ? '<th class="c"><input type="checkbox" id="selAll"' + (allSel ? ' checked' : '') + ' aria-label="Select page"></th>' : '') +
+    th('reference_number', 'Invoice', 'l') + th('customer_name', 'Customer', 'l') + th('invoice_date', 'Date') + th('age', 'Age') + th('invoice_amount', 'Amount') +
+    th('acu_status', 'Acumatica', 'l') + th('check_status', 'Check', 'l') + '<th class="l">Note</th>' + th('checked_at', 'Checked', 'l') + '</tr></thead>';
+  const body = page.map(r => {
+    const s = st(r), age = ageOf(r.invoice_date), ref = esc(r.reference_number);
+    return '<tr class="r is-' + s + (SEL.has(r.reference_number) ? ' sel' : '') + '" data-ref="' + ref + '">' +
+      (CAN ? '<td class="c"><input type="checkbox" class="sel"' + (SEL.has(r.reference_number) ? ' checked' : '') + ' aria-label="Select ' + ref + '"></td>' : '<td></td>') +
+      '<td class="l"><span class="ref">' + ref + '</span>' + (r.order_number ? '<small style="display:block;color:var(--ink3)">SO ' + esc(r.order_number) + '</small>' : '') + '</td>' +
+      '<td class="l cust"><b>' + esc(r.customer_name) + '</b><small>' + esc(r.customer_id) + '</small></td>' +
+      '<td>' + dShort(r.invoice_date) + '</td><td class="age ' + (age > 60 ? 'hot' : age > 30 ? 'warn' : '') + '">' + age + 'd</td>' +
+      '<td>' + fmtAmt(r) + '</td>' +
+      '<td class="l"><span class="tag">' + esc(r.acu_status) + '</span></td>' +
+      '<td class="l">' + (!CAN ? (s === 'found' ? '<span class="tag ok" style="background:var(--green-t);color:#13693a">Found</span>' : s === 'missing' ? '<span class="tag" style="background:var(--red-t);color:#8a1f1f">Missing</span>' : '<span class="who">Not checked</span>') : '<span class="mk"><button type="button" class="f' + (s === 'found' ? ' on' : '') + '" data-mark="found">Found</button><button type="button" class="m' + (s === 'missing' ? ' on' : '') + '" data-mark="missing">Missing</button></span>') + '</td>' +
+      '<td class="l">' + (CAN ? '<input class="note" maxlength="500" value="' + esc(r.note || '') + '" ' + (s === 'unchecked' ? 'disabled placeholder="Mark first to add a note"' : 'placeholder="Add a note"') + ' aria-label="Note for ' + ref + '">' : esc(r.note || '')) + '</td>' +
+      '<td class="l who">' + (r.checked_at ? esc(r.checked_by_name || '') + '<br>' + when(r.checked_at) : '') + '</td></tr>';
+  }).join('');
+  t.innerHTML = head + '<tbody>' + body + '</tbody>';
+  const pages = Math.ceil(VIEW.length / PAGE);
+  $('sum').innerHTML = '<div><small>Showing ' + fmt0(PG * PAGE + 1) + '–' + fmt0(Math.min(VIEW.length, PG * PAGE + PAGE)) + ' of ' + fmt0(VIEW.length) + ' · ' + esc(money(VIEW)) + '</small></div>' +
+    '<div class="pager"><button class="btn ghost sm" id="pPrev"' + (PG === 0 ? ' disabled' : '') + '>Prev</button><small>Page ' + (PG + 1) + ' of ' + pages + '</small><button class="btn ghost sm" id="pNext"' + (PG + 1 >= pages ? ' disabled' : '') + '>Next</button></div>';
+}
+function renderCust(){
+  const m = new Map();
+  for(const r of BASE){
+    let c = m.get(r.customer_id); if(!c){ c = { id:r.customer_id, name:r.customer_name, n:0, found:0, missing:0, unchecked:0, mv:{} }; m.set(r.customer_id, c); }
+    c.n++; c[st(r)]++;
+    if(st(r) === 'missing'){ const cu = r.currency_id || 'JMD'; c.mv[cu] = (c.mv[cu] || 0) + Number(r.invoice_amount || 0); }
+  }
+  let list = [...m.values()];
+  if(TAB === 'missing') list = list.filter(c => c.missing); else if(TAB === 'unchecked') list = list.filter(c => c.unchecked); else if(TAB === 'found') list = list.filter(c => c.found);
+  const key = { customer_name:'name', invoice_amount:'missing' }[SORT.key] || 'missing';
+  list.sort((a, b) => key === 'name' ? SORT.dir * a.name.localeCompare(b.name) : (b.missing - a.missing) || a.name.localeCompare(b.name));
+  $('tbl').innerHTML = '<thead><tr><th class="l sortable" data-sort="customer_name">Customer' + arrow('customer_name') + '</th><th>Invoices</th><th>Found</th><th>Missing</th><th>To check</th><th>Missing value</th><th></th></tr></thead><tbody>' +
+    (list.map(c => '<tr class="r"><td class="l cust"><b>' + esc(c.name) + '</b><small>' + esc(c.id) + '</small></td><td>' + c.n + '</td><td>' + c.found + '</td><td' + (c.missing ? ' style="color:#B3261E;font-weight:700"' : '') + '>' + c.missing + '</td><td>' + c.unchecked + '</td><td>' + esc(Object.keys(c.mv).map(k => k + ' ' + fmt0(c.mv[k])).join(' · ') || '—') + '</td><td><button class="btn ghost sm" data-cust="' + esc(c.id) + '">Open invoices</button></td></tr>').join('') || '<tr><td class="empty" colspan="7">No customers match.</td></tr>') + '</tbody>';
+  $('sum').innerHTML = '<div><small>' + fmt0(list.length) + ' customers</small></div>';
+}
+function renderBar(){
+  const bar = $('abar'), n = SEL.size;
+  bar.classList.toggle('hidden', !n || !CAN); if(!n || !CAN) return;
+  bar.innerHTML = '<div class="info">' + n + ' selected</div><button class="btn green" data-bulk="found">Mark found</button><button class="btn danger" data-bulk="missing">Mark missing</button><button class="btn ghost" data-bulk="clear">Clear marks</button><button class="btn ghost" data-bulk="none">Deselect</button>';
+}
+function renderAll(){
+  say(fmt0(ALL.length) + ' invoices loaded for ' + (LOADED_RANGE === '|' ? 'all dates' : (dShort($('fFrom').value) || 'the start') + ' to ' + (dShort($('fTo').value) || 'today')) + ' · ' + ME.name);
+  renderPresets(); renderKpis(); renderTabs(); renderTable(); renderBar();
+  $('foot').textContent = 'Invoices sync from Acumatica daily (latest sync ' + (ALL.length ? when(ALL.reduce((a, r) => r.synced_at > a ? r.synced_at : a, '')) : '—') + '). Cancelled invoices are hidden. ' + (CAN ? 'Notes need a Found or Missing mark.' : '');
+}
+
+// ---------- saving marks ----------
+function patchLocal(rows){ for(const d of rows){ const r = ALL.find(x => x.reference_number === d.reference_number); if(r) Object.assign(r, { check_status:d.status, note:d.note, checked_by_name:d.checked_by_name, checked_at:d.checked_at }); } }
+function clearLocal(refs){ for(const ref of refs){ const r = ALL.find(x => x.reference_number === ref); if(r) Object.assign(r, { check_status:null, note:null, checked_by_name:null, checked_at:null }); } }
+async function mark(refs, status){
+  if(!refs.length) return false;
+  if(status === 'clear'){
+    const withNote = refs.filter(ref => (ALL.find(x => x.reference_number === ref) || {}).note);
+    if(withNote.length && !confirm(withNote.length + ' of these ha' + (withNote.length === 1 ? 's' : 've') + ' a note, which will be lost. Clear the mark anyway?')) return false;
+    const { error } = await sb.from('mi_checks').delete().in('reference_number', refs);
+    if(error){ say('Could not save: ' + error.message, 'err'); return false; }
+    clearLocal(refs); return true;
+  }
+  const { data, error } = await sb.from('mi_checks').upsert(refs.map(reference_number => ({ reference_number, status })), { onConflict:'reference_number' }).select();
+  if(error){ say('Could not save: ' + error.message, 'err'); return false; }
+  patchLocal(data); return true;
+}
+async function saveNote(ref, text){
+  const r = ALL.find(x => x.reference_number === ref); if(!r || !r.check_status) return;
+  const note = text.trim() || null; if(note === (r.note || null)) return;
+  const { data, error } = await sb.from('mi_checks').update({ note }).eq('reference_number', ref).select().single();
+  if(error){ say('Could not save the note: ' + error.message, 'err'); return; }
+  patchLocal([data]);
+}
+
+// ---------- quick mark ----------
+const digits = s => String(s).replace(/\D/g, '').replace(/^0+/, '');
+async function quickMark(raw){
+  const v = raw.trim(); if(!v) return;
+  const lc = v.toLowerCase();
+  let hit = ALL.find(r => r.reference_number.toLowerCase() === lc);
+  if(!hit && digits(v)){ const m = ALL.filter(r => digits(r.reference_number) === digits(v)); if(m.length === 1) hit = m[0]; }
+  let ref = hit && hit.reference_number;
+  if(!ref){   // not in the loaded range: ask the database
+    const { data } = await sb.from('mi_invoices').select(COLS).ilike('reference_number', v).limit(2);
+    if(data && data.length === 1){ ref = data[0].reference_number; ALL.push(data[0]); hit = data[0]; }
+    else { qsay(v + ': ' + (data && data.length > 1 ? 'several invoices match, type the full number' : 'not an invoice in the Acumatica list'), 'err'); return; }
+  }
+  const prev = st(hit);
+  if(await mark([ref], QMODE)){
+    qsay(ref + ' ' + (hit.customer_name ? '(' + hit.customer_name + ') ' : '') + 'marked ' + QMODE + (prev !== 'unchecked' && prev !== QMODE ? ' (was ' + prev + ')' : prev === QMODE ? ' (already was)' : ''), 'ok');
+    refilter();
+  }
+}
+
+// ---------- export ----------
+function csvCell(v){ const s = String(v == null ? '' : v); return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; }
+function exportCsv(){
+  const rows = VIEW.length ? VIEW : [];
+  if(!rows.length){ say('Nothing to export.', 'err'); return; }
+  const out = [['Invoice','Customer ID','Customer','Amount','Currency','Invoice date','Age (days)','Acumatica status','Sales order','Branch','Check','Note','Checked by','Checked at']];
+  for(const r of rows) out.push([r.reference_number, r.customer_id, r.customer_name, Number(r.invoice_amount), r.currency_id, String(r.invoice_date).slice(0, 10), ageOf(r.invoice_date), r.acu_status, r.order_number, r.branch, st(r), r.note, r.checked_by_name, r.checked_at]);
+  const blob = new Blob(['﻿' + out.map(r => r.map(csvCell).join(',')).join('\r\n')], { type:'text/csv;charset=utf-8' });
+  const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = 'missing-invoices-' + TAB + '-' + TODAY + '.csv'; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 500);
+}
+
+// ---------- wiring ----------
+$('presets').addEventListener('click', e => { const b = e.target.closest('button[data-p]'); if(!b) return; const [f, t] = presetRange(b.dataset.p); $('fFrom').value = f; $('fTo').value = t; load(); });
+$('stabs').addEventListener('click', e => { const b = e.target.closest('button[data-s]'); if(!b) return; TAB = b.dataset.s; PG = 0; refilter(); });
+$('qMode').addEventListener('click', e => { const b = e.target.closest('button[data-m]'); if(!b) return; QMODE = b.dataset.m; for(const x of $('qMode').children) x.classList.toggle('on', x === b); $('qIn').focus(); });
+$('qIn').addEventListener('keydown', async e => { if(e.key !== 'Enter') return; const el = e.target, v = el.value; el.value = ''; await quickMark(v); el.focus(); });
+$('tbl').addEventListener('click', async e => {
+  const th = e.target.closest('th[data-sort]');
+  if(th){ const k = th.dataset.sort; SORT = SORT.key === k ? { key:k, dir:-SORT.dir } : { key:k, dir:1 }; refilter(); return; }
+  const cb = e.target.closest('button[data-cust]');
+  if(cb){ $('fView').value = 'inv'; $('fQ').value = cb.dataset.cust; TAB = 'all'; refilter(); return; }
+  if(e.target.id === 'selAll'){ VIEW.slice(PG * PAGE, PG * PAGE + PAGE).forEach(r => e.target.checked ? SEL.add(r.reference_number) : SEL.delete(r.reference_number)); renderTable(); renderBar(); return; }
+  if(e.target.id === 'pPrev'){ PG--; renderTable(); window.scrollTo({ top:0 }); return; }
+  if(e.target.id === 'pNext'){ PG++; renderTable(); window.scrollTo({ top:0 }); return; }
+  const tr = e.target.closest('tr.r[data-ref]'); if(!tr) return;
+  const ref = tr.dataset.ref;
+  if(e.target.classList.contains('sel')){ e.target.checked ? SEL.add(ref) : SEL.delete(ref); tr.classList.toggle('sel', SEL.has(ref)); renderBar(); return; }
+  const mk = e.target.closest('button[data-mark]');
+  if(mk){
+    const r = ALL.find(x => x.reference_number === ref), want = mk.dataset.mark;
+    if(await mark([ref], st(r) === want ? 'clear' : want)){ refilterKeepPage(); }
+  }
+});
+function refilterKeepPage(){ const p = PG; refilter(); PG = Math.min(p, Math.max(0, Math.ceil(VIEW.length / PAGE) - 1)); renderTable(); }
+$('tbl').addEventListener('change', e => { if(e.target.classList.contains('note')){ const tr = e.target.closest('tr[data-ref]'); saveNote(tr.dataset.ref, e.target.value); } });
+$('abar').addEventListener('click', async e => {
+  const b = e.target.closest('button[data-bulk]'); if(!b) return;
+  const act = b.dataset.bulk;
+  if(act === 'none'){ SEL.clear(); renderTable(); renderBar(); return; }
+  if(await mark([...SEL], act)){ SEL.clear(); refilterKeepPage(); }
+});
+const reload = debounce(() => { PG = 0; refilter(); }, 200);
+$('fQ').addEventListener('input', reload); for(const id of ['fMin', 'fMax', 'fAge']) $(id).addEventListener('input', reload);
+for(const id of ['fCur', 'fAcu', 'fBr', 'fNote', 'fBy', 'fView']) $(id).addEventListener('change', () => { PG = 0; refilter(); });
+for(const id of ['fFrom', 'fTo']) $(id).addEventListener('change', () => load());
+$('fClear').addEventListener('click', () => { for(const id of ['fQ','fCur','fAcu','fBr','fMin','fMax','fAge','fNote','fBy']) $(id).value = ''; $('fView').value = 'inv'; TAB = 'unchecked'; const [f, t] = presetRange('90'); $('fFrom').value = f; $('fTo').value = t; SORT = { key:'reference_number', dir:1 }; load(); });
+$('refreshBtn').addEventListener('click', () => load(true));
+$('csvBtn').addEventListener('click', exportCsv);
+
+function init(){
+  CAN = ME.level === 'invoice_clerk';
+  $('mainTabs').classList.toggle('hidden', CAN);   // the invoice clerk has no access to the other finance pages
+  $('quick').classList.toggle('hidden', !CAN); $('roBanner').classList.toggle('hidden', CAN);
+  const [f, t] = presetRange('90'); $('fFrom').value = f; $('fTo').value = t;
+  load(true);
+}
+
+// ---------- sign-in (same as the AR pages) ----------
+const MS_LOGO = '<svg width="18" height="18" viewBox="0 0 21 21" aria-hidden="true"><path fill="#f25022" d="M1 1h9v9H1z"/><path fill="#7fba00" d="M11 1h9v9h-9z"/><path fill="#00a4ef" d="M1 11h9v9H1z"/><path fill="#ffb900" d="M11 11h9v9h-9z"/></svg>';
+function gate(html){ $('app').classList.add('hidden'); $('gate').classList.remove('hidden'); $('gate').innerHTML = html; }
+async function signIn(){
+  const { error } = await sb.auth.signInWithOAuth({ provider:'azure', options:{ scopes:'email openid profile', redirectTo: location.origin + location.pathname } });
+  if(error) alert("Couldn't start sign-in: " + error.message);
+}
+async function signOut(){ await sb.auth.signOut(); location.reload(); }
+$('signout').addEventListener('click', signOut);
+async function start(){
+  const { data:{ session } } = await sb.auth.getSession();
+  if(!session){
+    gate('<h2>Missing Invoices</h2><p>Sign in with your DFL Microsoft account.</p><button class="btn ms" id="signin">' + MS_LOGO + 'Sign in with Microsoft</button>');
+    $('signin').addEventListener('click', signIn); return;
+  }
+  $('signout').classList.remove('hidden'); $('who').textContent = session.user.email || '';
+  const { data: access, error } = await sb.rpc('ar_my_access');
+  if(error || !access || !access.level){
+    gate('<h2>No access</h2><p>You are signed in as <b>' + esc(session.user.email) + '</b>, but this account is not set up for Missing Invoices. Ask IT Support to add you.</p><button class="btn" id="so">Sign out</button>');
+    $('so').addEventListener('click', signOut); return;
+  }
+  ME = { id: session.user.id, name: access.name || session.user.email, level: access.level };
+  $('who').textContent = ME.name + ' · ' + ME.level.replace('_', ' ');
+  $('gate').classList.add('hidden'); $('app').classList.remove('hidden');
+  init();
+}
+start();
+})();
+</script>
+</body>
+</html>

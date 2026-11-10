@@ -118,7 +118,7 @@ tr.sub td{background:#FBFCFE;text-align:left;padding:0}
 <body>
 <header>
 <div class="topbar"><img src="https://hzagwndglwhcepsirafi.supabase.co/storage/v1/object/public/Assets/DFL%20Logo%20Blue_White.png" alt="DFL Importers"><span id="who"></span><button class="btn small hidden" id="signout">Sign out</button></div>
-<nav class="tabs" aria-label="Finance sections"><a href="../index.html">Aging</a><a href="../collections.html">Collections</a><a class="on" href="queue.html">Bad Goods</a></nav>
+<nav class="tabs" aria-label="Finance sections"><a href="../index.html">Aging</a><a href="../collections.html">Collections</a><a class="on" href="queue.html">Bad Goods</a><a href="../missing-invoices/index.html">Missing Invoices</a></nav>
 <nav class="tabs sub" aria-label="Bad goods sections"><a class="on" href="queue.html">Queue</a><a href="entry.html#new">New slip <small>(test)</small></a><a href="entry.html#pack">Pack sizes</a></nav>
 </header>
 <div class="gate hidden" id="gate"></div>
@@ -551,6 +551,7 @@ async function start(){
   }
   $('signout').classList.remove('hidden'); $('who').textContent = session.user.email || '';
   const { data: access, error } = await sb.rpc('ar_my_access');
+  if(!error && access && access.level === 'invoice_clerk'){ location.replace('../missing-invoices/index.html'); return; }
   if(error || !access || !access.level){
     gate('<h2>No access</h2><p>You are signed in as <b>' + esc(session.user.email) + '</b>, but this account is not set up for the Bad Goods queue. Ask IT Support to add you.</p><button class="btn" id="so">Sign out</button>');
     $('so').addEventListener('click', signOut); return;
