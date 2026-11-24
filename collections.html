@@ -107,6 +107,8 @@ th.sortable{cursor:pointer;user-select:none}th.sortable:hover{color:var(--blue)}
       <select id="monthSel" aria-label="Month"></select>
       <input id="repSel" list="repList" placeholder="All reps — type or pick" autocomplete="off" aria-label="Sales rep">
       <datalist id="repList"></datalist>
+      <select id="unapSel" aria-label="Unapplied cash" title="Unapplied cash is only known for the latest AR snapshot, so this applies to the current month">
+        <option value="memo">Unapplied cash: memo only</option><option value="count">Unapplied cash: count as collected</option></select>
     </div>
     <div class="colsum" id="cards"></div>
   </div>
@@ -145,6 +147,7 @@ async function pageAll(build){
 }
 
 let SUMMARY = [], UNAPPLIED = {}, SNAP = null, MONTH = '', REP = '';
+let UNAP_COUNT = false;   // true: unapplied cash on account counts toward Collected (latest month only)
 let SORT = { key:'target', dir:-1 };
 const REP_OPTS = [];
 
@@ -152,14 +155,15 @@ async function load(){
   SUMMARY = (await pageAll(() => sb.from('ar_month_summary').select('*').order('month', { ascending:false }).order('rep_code').order('currency')))
     .map(r => Object.assign(r, { target:+r.target, credit_adj:+r.credit_adj, wo_adj:+r.wo_adj, adjusted_target:+r.adjusted_target,
       actual_targeted:+r.actual_targeted, actual_other:+r.actual_other, actual_total:+r.actual_total, rate:+r.rate || 1 }));
-  // memo only: cash received but not yet applied to an invoice, from the latest AR snapshot
+  // cash received but not yet applied to an invoice, from the latest AR snapshot, per rep and currency (in that currency,
+  // like the rest of the row). Shown as a memo, or counted as collected when the switch says so.
   try {
     const { data: snaps } = await sb.from('ar_aging_snapshots').select('id,snapshot_date').eq('status','complete').order('id',{ascending:false}).limit(1);
     SNAP = snaps && snaps[0] || null;
     UNAPPLIED = {};
     if(SNAP){
-      const rows = await pageAll(() => sb.from('ar_aging_rows').select('rep_code,balance_jmd').eq('snapshot_id', SNAP.id).eq('doc_type','Payment').order('ref_nbr'));
-      for(const r of rows){ const k = r.rep_code || UNASSIGNED; UNAPPLIED[k] = (UNAPPLIED[k] || 0) - (Number(r.balance_jmd) || 0); }
+      const rows = await pageAll(() => sb.from('ar_aging_rows').select('rep_code,currency,balance_doc').eq('snapshot_id', SNAP.id).eq('doc_type','Payment').order('ref_nbr'));
+      for(const r of rows){ const k = (r.rep_code || UNASSIGNED) + '|' + (r.currency || 'JMD'); UNAPPLIED[k] = (UNAPPLIED[k] || 0) - (Number(r.balance_doc) || 0); }
     }
   } catch(e){ console.error(e); UNAPPLIED = {}; }
 }
@@ -173,10 +177,15 @@ function render(){
   if(!MONTH || !months.includes(MONTH)) MONTH = months[0];
   $('monthSel').innerHTML = months.map(m => '<option value="' + m + '"' + (m === MONTH ? ' selected' : '') + '>' + esc(monthLabel(m)) + '</option>').join('');
   const rows = SUMMARY.filter(r => r.month === MONTH && (!REP || (REP === UNASSIGNED ? !r.rep_code : r.rep_code === REP)));
+  const latest = MONTH === months[0];
+  $('unapSel').disabled = !latest;
+  const count = UNAP_COUNT && latest;
+  const ua = r => latest ? (UNAPPLIED[(r.rep_code || UNASSIGNED) + '|' + r.currency] || 0) : 0;
+  const act = r => r.actual_total + (count ? ua(r) : 0);   // Collected, with unapplied cash when it is counted
 
   const sum = cur => {
     const rs = rows.filter(r => !cur || r.currency === cur), f = x => rs.reduce((s, r) => s + x(r) * (cur ? 1 : r.rate), 0);
-    return { t:f(r => r.adjusted_target), a:f(r => r.actual_total), n:rs.length };
+    return { t:f(r => r.adjusted_target), a:f(act), n:rs.length };
   };
   const card = (label, s, unit) => '<div class="colcard"><div class="l">' + label + '</div><div class="v">' + unit + fmt0(s.a) + ' <small>of ' + unit + fmt0(s.t) + '</small></div>' +
     '<div class="pbar"><i class="' + (s.t > 0 && s.a >= s.t ? 'ok' : '') + '" style="width:' + Math.min(100, s.t > 0 ? s.a / s.t * 100 : 0).toFixed(1) + '%"></i></div>' +
@@ -184,31 +193,33 @@ function render(){
   const jmd = sum('JMD'), usd = sum('USD'), all = sum(null);
   $('cards').innerHTML = card('JMD customers', jmd, 'J$') + card('USD customers', usd, 'US$') + card('Company total (JMD equivalent)', all, 'J$');
 
-  const latest = MONTH === months[0];
-  const acc = { rep: r => (r.rep_code || '~').toLowerCase(), target: r => r.target * r.rate, adj: r => r.adjusted_target * r.rate, actual: r => r.actual_total * r.rate,
-    pct: r => r.adjusted_target > 0 ? r.actual_total / r.adjusted_target : -1, gap: r => (r.adjusted_target - r.actual_total) * r.rate };
-  const list = rows.filter(r => r.target || r.actual_total).sort((a, b) => {
+  const acc = { rep: r => (r.rep_code || '~').toLowerCase(), target: r => r.target * r.rate, adj: r => r.adjusted_target * r.rate, actual: r => act(r) * r.rate,
+    pct: r => r.adjusted_target > 0 ? act(r) / r.adjusted_target : -1, gap: r => (r.adjusted_target - act(r)) * r.rate, unap: r => ua(r) * r.rate };
+  const list = rows.filter(r => r.target || r.actual_total || ua(r)).sort((a, b) => {
     const f = acc[SORT.key] || acc.target, x = f(a), y = f(b), c = typeof x === 'string' ? x.localeCompare(y) : x - y;
     return c ? c * SORT.dir : String(a.rep_code).localeCompare(String(b.rep_code));
   });
   const th = (key, label, cls) => '<th class="sortable ' + (cls || '') + '" data-sort="' + key + '">' + label + (SORT.key === key ? (SORT.dir < 0 ? ' ▼' : ' ▲') : '') + '</th>';
   $('repTable').innerHTML = '<tr>' + th('rep', 'Rep') + '<th>Cur</th>' + th('target', 'Target') + '<th class="hide-m">Credits / write-offs</th>' + th('adj', 'Adj. target') +
-    '<th class="hide-m">On targeted invoices</th><th class="hide-m">Early / other</th>' + th('actual', 'Collected') + th('pct', '%') + th('gap', 'Gap', 'hide-m') +
-    (latest ? '<th class="hide-m">Unapplied (memo)</th>' : '') + '</tr>' +
+    '<th class="hide-m">On targeted invoices</th><th class="hide-m">Early / other</th>' +
+    (latest ? th('unap', count ? 'Unapplied' : 'Unapplied (memo)', 'hide-m') : '') +
+    th('actual', count ? 'Collected incl. unapplied' : 'Collected') + th('pct', '%') + th('gap', 'Gap', 'hide-m') + '</tr>' +
     (list.map(r => {
-      const u = r.currency === 'JMD' && latest ? UNAPPLIED[r.rep_code || UNASSIGNED] : null;
+      const u = ua(r), a = act(r);
       return '<tr><td><b>' + esc(r.rep_code || 'Unassigned') + '</b> <small style="color:var(--ink3)">' + esc(r.rep_name && r.rep_name !== r.rep_code ? r.rep_name : '') + '</small></td><td>' + esc(r.currency) + '</td>' +
         '<td>' + fmt0(r.target) + '</td><td class="hide-m">' + (r.credit_adj + r.wo_adj ? '-' + fmt0(r.credit_adj + r.wo_adj) : '') + '</td><td><b>' + fmt0(r.adjusted_target) + '</b></td>' +
-        '<td class="hide-m">' + fmt0(r.actual_targeted) + '</td><td class="hide-m">' + fmt0(r.actual_other) + '</td><td><b>' + fmt0(r.actual_total) + '</b></td><td>' + pctHtml(r.actual_total, r.adjusted_target) + '</td>' +
-        '<td class="hide-m ' + (r.adjusted_target - r.actual_total <= 0 ? 'neg' : '') + '">' + fmt0(r.adjusted_target - r.actual_total) + '</td>' +
-        (latest ? '<td class="hide-m">' + (u ? fmt0(u) : '') + '</td>' : '') + '</tr>';
+        '<td class="hide-m">' + fmt0(r.actual_targeted) + '</td><td class="hide-m">' + fmt0(r.actual_other) + '</td>' +
+        (latest ? '<td class="hide-m">' + (u ? fmt0(u) : '') + '</td>' : '') +
+        '<td><b>' + fmt0(a) + '</b></td><td>' + pctHtml(a, r.adjusted_target) + '</td>' +
+        '<td class="hide-m ' + (r.adjusted_target - a <= 0 ? 'neg' : '') + '">' + fmt0(r.adjusted_target - a) + '</td></tr>';
     }).join('') || '<tr><td colspan="11" class="empty">No targets for this selection.</td></tr>');
 
   const rec = rows.some(r => r.reconstructed);
   $('foot').textContent = 'Target = open balance of invoices due by month end (overdue carry-over included) net of open credits, frozen at the start of the month. Collected = all cash received in the month, early payments included, voids deducted. ' +
     'Credit memos and write-offs after the freeze lower the target. USD customers are in USD; the company total converts at the month\'s frozen rate.' +
     (rec ? ' Some invoices paid early in the month were rebuilt from payment history (due date estimated from customer terms).' : '') +
-    ' Unapplied cash on account is a memo, not part of the collected figure.';
+    (count ? ' Unapplied cash on account (payments received but not yet applied to an invoice, as of the latest AR snapshot) is counted as collected, so the gap is what is still to come in from the reps.'
+      : ' Unapplied cash on account is a memo, not part of the collected figure' + (latest ? '; switch it to "count as collected" to see what is still to come in from the reps.' : ', and is only known for the current month.'));
   pinVars();
 }
 
@@ -255,6 +266,7 @@ async function init(){
 }
 
 $('monthSel').addEventListener('change', () => { MONTH = $('monthSel').value; render(); });
+$('unapSel').addEventListener('change', () => { UNAP_COUNT = $('unapSel').value === 'count'; render(); });
 $('repTable').addEventListener('click', e => {
   const h = e.target.closest('th[data-sort]'); if(!h) return;
   const k = h.dataset.sort; SORT.dir = SORT.key === k ? -SORT.dir : (k === 'rep' ? 1 : -1); SORT.key = k; render();

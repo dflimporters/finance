@@ -77,7 +77,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--bf)}
 .kpi .d{font-size:11px;color:#9FB0D6;min-height:16px}
 .kpi .d.up{color:#FFC76B}.kpi .d.down{color:#7be0a6}
 .kpi.b31{border-top:4px solid #F2D64B}.kpi.b61{border-top:4px solid #F0954A}.kpi.b90{border-top:4px solid #E5534B}
-.kpi.cr{border-top:4px solid #3fb57a}
+.kpi.cr{border-top:4px solid #3fb57a}.kpi.ua{border-top:4px solid #7fb3ff}
 .panel{background:var(--card);border:1px solid var(--line);border-radius:8px;margin-bottom:16px;overflow:hidden}
 .panel h2{font:700 12px var(--hf);text-transform:uppercase;letter-spacing:.08em;color:var(--ink2);margin:0;padding:12px 14px;border-bottom:1px solid var(--line)}
 .scroll{overflow-x:auto}
@@ -141,6 +141,7 @@ tr.exp td{background:#FBFCFE}
 .fgrid input,.fgrid select{height:38px;border:1px solid #CBD3E1;border-radius:6px;padding:0 9px;font:14px var(--bf);width:100%;background:#fff}
 .mbox.wide{max-width:520px;max-height:92vh;overflow:auto}
 .ferr{color:#8a1f1f;font-size:12.5px;min-height:18px;margin-top:6px}
+@media (min-width:901px){.strip.u7{grid-template-columns:repeat(7,minmax(0,1fr))}}
 @media (max-width:900px){.strip{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media (max-width:640px){
   .page{padding:14px 12px 70px}
@@ -186,6 +187,8 @@ tr.exp td{background:#FBFCFE}
     <label class="flt">Sort <select id="sortSel" aria-label="Sort customers">
       <option value="old">Biggest overdue (61+ days)</option><option value="b90">Most over 90 days</option><option value="total">Largest balance</option>
       <option value="name">Name A–Z</option><option value="last">Longest since contact</option><option value="custom" disabled hidden>Sorted by column</option></select></label>
+    <label class="flt">Unapplied cash <select id="unapSel" aria-label="Unapplied cash">
+      <option value="in">Included (net of payments)</option><option value="out">Excluded (open invoices only)</option></select></label>
     <button class="btn ghost sm" id="clearBtn">Clear filters</button>
   </div>
 
@@ -201,7 +204,7 @@ tr.exp td{background:#FBFCFE}
     <h2 id="custHead">Customers</h2>
     <div id="custList"><div class="empty">Loading…</div></div>
   </div>
-  <p class="foot">Aged from document date. Yellow over 30 days, orange over 60, red over 90. Credit memos and payments are shown as negative lines. All totals in JMD; USD documents carry a USD tag and show their USD amount.</p>
+  <p class="foot">Aged from document date. Yellow over 30 days, orange over 60, red over 90. Credit memos and unapplied payments are shown as negative lines. Unapplied cash (payments received but not yet applied to an invoice) lowers the customer total but no age bucket; switch it to Excluded to see the open invoices as they stand. All totals in JMD; USD documents carry a USD tag and show their USD amount.</p>
 </div>
 
 <div class="modal hidden" id="noteModal" role="dialog" aria-modal="true">
@@ -257,7 +260,7 @@ const sb = supabase.createClient('https://hzagwndglwhcepsirafi.supabase.co', 'sb
 let PROFILE = null, ALL_MODE = false;
 let SNAP = null, PREV = null;
 let ROWS = [];                 // latest snapshot rows visible to this user
-let PREV_AGG = { total:{}, cust:{}, byRep:{}, buckets:{} };
+let PREV_AGG = { total:{}, cust:{}, byRep:{}, buckets:{}, custU:{}, byRepU:{} };
 let NOTES = new Map();         // "type|ref" -> note
 let LOG = new Map();           // customer_id -> contact log entries, newest first
 const OUTCOMES = { no_answer:'No answer', left_message:'Left message', promised:'Promised to pay', partial_payment:'Partial payment', disputed:'Disputed', paid:'Paid', escalate:'Escalate', other:'Other' };
@@ -268,6 +271,13 @@ const dShort = s => s ? new Date(s + 'T00:00:00').toLocaleDateString('en-GB', { 
 const daysSince = s => Math.round((Date.parse(TODAY + 'T00:00:00Z') - Date.parse(s + 'T00:00:00Z')) / 86400000);
 let REP_FILTER = '';           // '' = all, UNASSIGNED, or rep code
 let OPEN = new Set();          // expanded customer ids
+// Unapplied cash = Payment documents still open on account. Included (default): they net the customer total, which is what is
+// really left to collect. Excluded: the open invoices as they stand. They never reduce an age bucket (no invoice to tie them to).
+let UNAPP = true;
+const isUnap = r => r.doc_type === 'Payment';
+const baseRows = () => UNAPP ? ROWS : ROWS.filter(r => !isUnap(r));
+const prevCust = k => PREV_AGG.cust[k] == null ? null : PREV_AGG.cust[k] - (UNAPP ? 0 : (PREV_AGG.custU[k] || 0));
+const prevRep = k => (PREV_AGG.byRep[k] || 0) - (UNAPP ? 0 : (PREV_AGG.byRepU[k] || 0));
 
 const fmt = n => (n < 0 ? '-' : '') + Math.abs(n).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 const fmt0 = n => (n < 0 ? '-' : '') + Math.abs(Math.round(n)).toLocaleString('en-US');
@@ -299,7 +309,7 @@ async function pageAll(build, expected){
 // Switching to the Collections tab and back used to refetch ~17 pages of rows. The rows of a snapshot never change, so the
 // last load is kept for this browser tab, keyed by user (RLS makes the rows per-user) and snapshot ids. Notes and the contact
 // log are small, change often, and are always fetched fresh.
-const CACHE_KEY = 'ar_aging_cache_v1';
+const CACHE_KEY = 'ar_aging_cache_v2';
 function cacheGet(uid, snapId, prevId){
   try { const c = JSON.parse(sessionStorage.getItem(CACHE_KEY) || 'null'); if(c && c.uid === uid && c.snap === snapId && c.prev === prevId) return c; } catch(_) {}
   return null;
@@ -328,14 +338,17 @@ async function load(){
         .select('doc_type,ref_nbr,rep_code,customer_id,bucket,balance_jmd')
         .eq('snapshot_id', PREV.id).order('doc_type').order('ref_nbr'), PREV.row_count) : Promise.resolve([])
     ]);
-    ROWS = rows.map(r => Object.assign(r, { balance_jmd:Number(r.balance_jmd)||0, balance_doc:Number(r.balance_doc)||0, amount_doc:Number(r.amount_doc)||0 }));
-    PREV_AGG = { total:{}, cust:{}, byRep:{}, buckets:{} };
+    // unapplied payments get their own bucket so they can be shown, or left out, separately from credit memos
+    ROWS = rows.map(r => Object.assign(r, { balance_jmd:Number(r.balance_jmd)||0, balance_doc:Number(r.balance_doc)||0, amount_doc:Number(r.amount_doc)||0 },
+      isUnap(r) ? { bucket:'Unapplied' } : {}));
+    PREV_AGG = { total:{}, cust:{}, byRep:{}, buckets:{}, custU:{}, byRepU:{} };
     for(const r of prev){
-      const v = Number(r.balance_jmd) || 0, rep = r.rep_code || UNASSIGNED;
-      PREV_AGG.cust[rep + '|' + r.customer_id] = (PREV_AGG.cust[rep + '|' + r.customer_id] || 0) + v;
+      const v = Number(r.balance_jmd) || 0, rep = r.rep_code || UNASSIGNED, ck = rep + '|' + r.customer_id, u = isUnap(r);
+      PREV_AGG.cust[ck] = (PREV_AGG.cust[ck] || 0) + v;
       PREV_AGG.byRep[rep] = (PREV_AGG.byRep[rep] || 0) + v;
-      const b = PREV_AGG.buckets[rep] || (PREV_AGG.buckets[rep] = {});
-      b[r.bucket] = (b[r.bucket] || 0) + v;
+      if(u){ PREV_AGG.custU[ck] = (PREV_AGG.custU[ck] || 0) + v; PREV_AGG.byRepU[rep] = (PREV_AGG.byRepU[rep] || 0) + v; }
+      const b = PREV_AGG.buckets[rep] || (PREV_AGG.buckets[rep] = {}), bk = u ? 'Unapplied' : r.bucket;
+      b[bk] = (b[bk] || 0) + v;
     }
     cachePut({ uid: PROFILE.id, snap: SNAP.id, prev: PREV ? PREV.id : null, rows: ROWS, prevAgg: PREV_AGG });
   }
@@ -383,18 +396,22 @@ let RSORT = { key:'90+', dir:-1 };       // rep-table sort
 let LIMIT = 200;                         // customers shown before "show more"
 
 function visibleRows(){
-  if(!ALL_MODE || !REP_FILTER) return ROWS;
-  return ROWS.filter(r => REP_FILTER === UNASSIGNED ? !r.rep_code : r.rep_code === REP_FILTER);
+  const rows = baseRows();
+  if(!ALL_MODE || !REP_FILTER) return rows;
+  return rows.filter(r => REP_FILTER === UNASSIGNED ? !r.rep_code : r.rep_code === REP_FILTER);
 }
 function sumBuckets(rows){
-  const o = { Current:0, '31-60':0, '61-90':0, '90+':0, Credit:0, total:0 };
+  const o = { Current:0, '31-60':0, '61-90':0, '90+':0, Credit:0, Unapplied:0, total:0 };
   for(const r of rows){ o[r.bucket] += r.balance_jmd; o.total += r.balance_jmd; }
   return o;
 }
 function prevBuckets(){
   const reps = !ALL_MODE ? Object.keys(PREV_AGG.buckets) : (REP_FILTER ? [REP_FILTER] : Object.keys(PREV_AGG.buckets));
-  const o = { Current:0, '31-60':0, '61-90':0, '90+':0, Credit:0, total:0 };
-  for(const rep of reps) for(const k in (PREV_AGG.buckets[rep] || {})){ o[k] += PREV_AGG.buckets[rep][k]; o.total += PREV_AGG.buckets[rep][k]; }
+  const o = { Current:0, '31-60':0, '61-90':0, '90+':0, Credit:0, Unapplied:0, total:0 };
+  for(const rep of reps) for(const k in (PREV_AGG.buckets[rep] || {})){
+    if(k === 'Unapplied' && !UNAPP) continue;
+    o[k] += PREV_AGG.buckets[rep][k]; o.total += PREV_AGG.buckets[rep][k];
+  }
   return o;
 }
 function deltaHtml(cur, prev){
@@ -411,7 +428,7 @@ function groupCustomers(rows){
     const k = (r.rep_code || UNASSIGNED) + '|' + r.customer_id;
     let c = m.get(k);
     if(!c) m.set(k, c = { key:k, id:r.customer_id, name:r.customer_name || r.customer_id, rep:r.rep_code, repName:r.rep_name, rows:[], total:0, over60:0, over90:0, worst:0,
-      b:{ Current:0, '31-60':0, '61-90':0, '90+':0, Credit:0 } });
+      b:{ Current:0, '31-60':0, '61-90':0, '90+':0, Credit:0, Unapplied:0 } });
     c.rows.push(r); c.total += r.balance_jmd; c.b[r.bucket] += r.balance_jmd;
     if(!r.is_credit){
       if(r.bucket === '61-90' || r.bucket === '90+') c.over60 += r.balance_jmd;
@@ -447,7 +464,7 @@ function repMatch(c){ return !ALL_MODE || !REP_FILTER || (REP_FILTER === UNASSIG
 
 // One pass per render: every customer with its log status, then the ones that pass the filters.
 function compute(){
-  const all = groupCustomers(ROWS);
+  const all = groupCustomers(baseRows());
   for(const c of all) c.st = logStatus(c.id);
   const pass = all.filter(custPass);
   return { all, pass, scoped: pass.filter(repMatch) };
@@ -456,9 +473,9 @@ function compute(){
 // ---------- sorting ----------
 const ACC = {
   name: c => c.name.toLowerCase(), rep: c => (c.repName || c.rep || '~').toLowerCase(),
-  Current: c => c.b.Current, '31-60': c => c.b['31-60'], '61-90': c => c.b['61-90'], '90+': c => c.b['90+'], Credit: c => c.b.Credit,
+  Current: c => c.b.Current, '31-60': c => c.b['31-60'], '61-90': c => c.b['61-90'], '90+': c => c.b['90+'], Credit: c => c.b.Credit, Unapplied: c => c.b.Unapplied,
   total: c => c.total, over60: c => c.over60,
-  change: c => c.total - (PREV_AGG.cust[c.key] == null ? 0 : PREV_AGG.cust[c.key]),
+  change: c => c.total - (prevCust(c.key) || 0),
   last: c => c.st.daysAgo == null ? 1e9 : c.st.daysAgo
 };
 function sortBy(list, S, acc){
@@ -478,8 +495,8 @@ function renderKpis(scoped){
   const prev = filtersActive() ? null : prevBuckets();
   const tiles = [
     ['Current','Current 0-30',''], ['31-60','31-60 days','b31'], ['61-90','61-90 days','b61'], ['90+','Over 90','b90'],
-    ['Credit','Credits','cr'], ['total','Net balance','']
-  ];
+    ['Credit','Credits','cr']].concat(UNAPP ? [['Unapplied','Unapplied cash','ua']] : []).concat([['total', UNAPP ? 'Net balance' : 'Open invoices','']]);
+  $('kpis').classList.toggle('u7', UNAPP);
   $('kpis').innerHTML = tiles.map(([k,l,c]) =>
     '<div class="kpi ' + c + '"><div class="l">' + l + '</div><div class="v">' + fmt0(cur[k]) + '</div><div class="d">' + (prev ? deltaHtml(cur[k], prev[k]) : '') + '</div></div>').join('');
 }
@@ -491,26 +508,26 @@ function renderRepTable(pass){
   const by = {};
   for(const c of pass){
     const k = c.rep || UNASSIGNED;
-    const o = by[k] || (by[k] = { key:k, name: c.repName || (c.rep ? '' : 'No rep'), b:{ Current:0,'31-60':0,'61-90':0,'90+':0,Credit:0 }, total:0 });
+    const o = by[k] || (by[k] = { key:k, name: c.repName || (c.rep ? '' : 'No rep'), b:{ Current:0,'31-60':0,'61-90':0,'90+':0,Credit:0,Unapplied:0 }, total:0 });
     if(!o.name && c.repName) o.name = c.repName;
     for(const x in c.b) o.b[x] += c.b[x];
     o.total += c.total;
   }
   const showDelta = !filtersActive();
   const racc = { rep: o => o.key.toLowerCase(), Current: o => o.b.Current, '31-60': o => o.b['31-60'], '61-90': o => o.b['61-90'], '90+': o => o.b['90+'],
-    Credit: o => o.b.Credit, total: o => o.total, change: o => o.total - (PREV_AGG.byRep[o.key] || 0) };
+    Credit: o => o.b.Credit, Unapplied: o => o.b.Unapplied, total: o => o.total, change: o => o.total - prevRep(o.key) };
   const reps = sortBy(Object.values(by), RSORT, racc);
-  const tot = { Current:0, '31-60':0, '61-90':0, '90+':0, Credit:0, total:0 };
+  const tot = { Current:0, '31-60':0, '61-90':0, '90+':0, Credit:0, Unapplied:0, total:0 };
   for(const o of reps){ for(const x in o.b) tot[x] += o.b[x]; tot.total += o.total; }
   const th = (key, label, cls) => '<th class="sortable ' + (cls || '') + '" data-rsort="' + key + '">' + label + arrow(RSORT, key) + '</th>';
   $('repTable').innerHTML = '<tr>' + th('rep', 'Rep') + th('Current', 'Current') + th('31-60', '31-60') + th('61-90', '61-90') + th('90+', '90+') +
-    th('Credit', 'Credits', 'hide-m') + th('total', 'Net') + (showDelta ? th('change', 'Change', 'hide-m') : '') + '<th class="hide-m">Customers</th></tr>' +
+    th('Credit', 'Credits', 'hide-m') + (UNAPP ? th('Unapplied', 'Unapplied', 'hide-m') : '') + th('total', UNAPP ? 'Net' : 'Open') + (showDelta ? th('change', 'Change', 'hide-m') : '') + '<th class="hide-m">Customers</th></tr>' +
     reps.map(o => '<tr class="click" data-rep="' + esc(o.key) + '"><td><b>' + esc(o.key === UNASSIGNED ? 'Unassigned' : o.key) + '</b> <small style="color:var(--ink3)">' + esc(o.name) + '</small></td>' +
       '<td>' + fmt0(o.b.Current) + '</td><td>' + fmt0(o.b['31-60']) + '</td><td>' + fmt0(o.b['61-90']) + '</td><td><b>' + fmt0(o.b['90+']) + '</b></td>' +
-      '<td class="hide-m neg">' + fmt0(o.b.Credit) + '</td><td><b>' + fmt0(o.total) + '</b></td>' +
-      (showDelta ? '<td class="hide-m">' + deltaHtml(o.total, PREV_AGG.byRep[o.key] || 0) + '</td>' : '') +
+      '<td class="hide-m neg">' + fmt0(o.b.Credit) + '</td>' + (UNAPP ? '<td class="hide-m neg">' + fmt0(o.b.Unapplied) + '</td>' : '') + '<td><b>' + fmt0(o.total) + '</b></td>' +
+      (showDelta ? '<td class="hide-m">' + deltaHtml(o.total, prevRep(o.key)) + '</td>' : '') +
       '<td class="hide-m">' + pass.filter(c => (c.rep || UNASSIGNED) === o.key).length + '</td></tr>').join('') +
-    '<tr><td><b>All reps</b></td><td><b>' + fmt0(tot.Current) + '</b></td><td><b>' + fmt0(tot['31-60']) + '</b></td><td><b>' + fmt0(tot['61-90']) + '</b></td><td><b>' + fmt0(tot['90+']) + '</b></td><td class="hide-m neg"><b>' + fmt0(tot.Credit) + '</b></td><td><b>' + fmt0(tot.total) + '</b></td>' +
+    '<tr><td><b>All reps</b></td><td><b>' + fmt0(tot.Current) + '</b></td><td><b>' + fmt0(tot['31-60']) + '</b></td><td><b>' + fmt0(tot['61-90']) + '</b></td><td><b>' + fmt0(tot['90+']) + '</b></td><td class="hide-m neg"><b>' + fmt0(tot.Credit) + '</b></td>' + (UNAPP ? '<td class="hide-m neg"><b>' + fmt0(tot.Unapplied) + '</b></td>' : '') + '<td><b>' + fmt0(tot.total) + '</b></td>' +
     (showDelta ? '<td class="hide-m"></td>' : '') + '<td class="hide-m"><b>' + pass.length + '</b></td></tr>';
 }
 
@@ -558,11 +575,12 @@ const repText = c => c.rep ? (c.repName ? c.repName + ' (' + c.rep + ')' : c.rep
 function renderCards(list){
   const shown = list.slice(0, LIMIT);
   return shown.map(c => {
-    const prev = PREV_AGG.cust[c.key], open = OPEN.has(c.key);
+    const prev = prevCust(c.key), open = OPEN.has(c.key);
     return '<div class="cust ' + (open ? 'open' : '') + '" data-key="' + esc(c.key) + '"><div class="chead"><span class="chev">▶</span>' +
       '<div class="cname"><b>' + esc(c.name) + '</b><small>' + esc(c.id) + ' · Rep: ' + esc(repText(c)) + '</small>' + badgesFor(c.st) + '</div>' +
       (c.worst > 30 ? '<span class="pill ' + chip(c.worst) + ' hide-m">oldest ' + c.worst + 'd</span>' : '') +
       '<div class="cnum hide-m">' + fmt0(c.over60) + '<small>over 60d</small></div>' +
+      (UNAPP && c.b.Unapplied ? '<div class="cnum hide-m neg">' + fmt0(c.b.Unapplied) + '<small>unapplied</small></div>' : '') +
       '<div class="cnum"><b>' + fmt0(c.total) + '</b><small>' + (PREV ? (prev == null ? 'new' : deltaHtml(c.total, prev)) : '&nbsp;') + '</small></div></div>' +
       (open ? '<div class="docs">' + docsPanel(c) + '</div>' : '') + '</div>';
   }).join('');
@@ -573,15 +591,15 @@ function renderCustTable(list){
   const shown = list.slice(0, LIMIT);
   const th = (key, label, cls) => '<th class="sortable ' + (cls || '') + '" data-csort="' + key + '">' + label + arrow(CSORT, key) + '</th>';
   return '<div class="scroll"><table class="ctable"><tr>' + th('name', 'Customer') + th('rep', 'Rep', 'hide-m') + th('Current', 'Current', 'hide-m') + th('31-60', '31-60', 'hide-m') +
-    th('61-90', '61-90', 'hide-m') + th('90+', '90+') + th('Credit', 'Credits', 'hide-m') + th('total', 'Net') + th('change', 'Change', 'hide-m') + th('last', 'Last contact', 'hide-m') + '</tr>' +
+    th('61-90', '61-90', 'hide-m') + th('90+', '90+') + th('Credit', 'Credits', 'hide-m') + (UNAPP ? th('Unapplied', 'Unapplied', 'hide-m') : '') + th('total', UNAPP ? 'Net' : 'Open') + th('change', 'Change', 'hide-m') + th('last', 'Last contact', 'hide-m') + '</tr>' +
     shown.map(c => {
-      const prev = PREV_AGG.cust[c.key], open = OPEN.has(c.key);
+      const prev = prevCust(c.key), open = OPEN.has(c.key);
       return '<tr class="crow click" data-key="' + esc(c.key) + '"><td><b>' + esc(c.name) + '</b> <small style="color:var(--ink3)">' + esc(c.id) + '</small>' + badgesFor(c.st) + '</td>' +
         '<td class="hide-m">' + esc(repText(c)) + '</td><td class="hide-m">' + fmt0(c.b.Current) + '</td><td class="hide-m">' + fmt0(c.b['31-60']) + '</td><td class="hide-m">' + fmt0(c.b['61-90']) + '</td>' +
-        '<td><b>' + fmt0(c.b['90+']) + '</b></td><td class="hide-m neg">' + fmt0(c.b.Credit) + '</td><td><b>' + fmt0(c.total) + '</b></td>' +
+        '<td><b>' + fmt0(c.b['90+']) + '</b></td><td class="hide-m neg">' + fmt0(c.b.Credit) + '</td>' + (UNAPP ? '<td class="hide-m neg">' + fmt0(c.b.Unapplied) + '</td>' : '') + '<td><b>' + fmt0(c.total) + '</b></td>' +
         '<td class="hide-m">' + (PREV ? (prev == null ? 'new' : deltaHtml(c.total, prev)) : '') + '</td>' +
         '<td class="hide-m">' + (c.st.last ? (c.st.daysAgo === 0 ? 'today' : c.st.daysAgo + 'd ago') : '—') + '</td></tr>' +
-        (open ? '<tr class="exp"><td colspan="10" style="padding:0;text-align:left;white-space:normal"><div class="docs" style="display:block">' + docsPanel(c) + '</div></td></tr>' : '');
+        (open ? '<tr class="exp"><td colspan="' + (UNAPP ? 11 : 10) + '" style="padding:0;text-align:left;white-space:normal"><div class="docs" style="display:block">' + docsPanel(c) + '</div></td></tr>' : '');
     }).join('') + '</table></div>';
 }
 
@@ -623,11 +641,11 @@ async function buildWorkbook(repCode, repName, rows){
   const sb_ = sumBuckets(rows);
   ws.getCell('A1').value = 'AR Aging — ' + (repName || repCode || 'Unassigned') + (repCode ? ' (' + repCode + ')' : '');
   ws.getCell('A1').font = { bold:true, size:14 };
-  ws.getCell('A2').value = 'As of ' + SNAP.snapshot_date + '  ·  aged from document date  ·  all totals in JMD';
+  ws.getCell('A2').value = 'As of ' + SNAP.snapshot_date + '  ·  aged from document date  ·  all totals in JMD  ·  unapplied cash ' + (UNAPP ? 'included' : 'excluded');
   ws.getCell('A2').font = { italic:true, color:{ argb:'FF4A5578' } };
-  const hdr = ['Current 0-30','31-60','61-90','Over 90','Credits','Net balance'];
-  const val = [sb_.Current, sb_['31-60'], sb_['61-90'], sb_['90+'], sb_.Credit, sb_.total];
-  const cols = [2,3,4,5,6,7];
+  const hdr = ['Current 0-30','31-60','61-90','Over 90','Credits'].concat(UNAPP ? ['Unapplied cash'] : []).concat([UNAPP ? 'Net balance' : 'Open invoices']);
+  const val = [sb_.Current, sb_['31-60'], sb_['61-90'], sb_['90+'], sb_.Credit].concat(UNAPP ? [sb_.Unapplied] : []).concat([sb_.total]);
+  const cols = hdr.map((_, i) => i + 2);
   hdr.forEach((h,i) => { const c = ws.getCell(4, cols[i]); c.value = h; c.font = { bold:true, color:{ argb:'FFFFFFFF' } }; fillCell(c, FILL.hdr); c.alignment = { horizontal:'center' };
     const v = ws.getCell(5, cols[i]); v.value = val[i]; v.numFmt = '#,##0.00;[Red]-#,##0.00'; v.font = { bold:true }; });
   fillCell(ws.getCell(5,3), FILL.y); fillCell(ws.getCell(5,4), FILL.o); fillCell(ws.getCell(5,5), FILL.r);
@@ -679,7 +697,7 @@ async function download(){
     const date = SNAP.snapshot_date;
     if(ALL_MODE && !REP_FILTER){
       const zip = new JSZip(); const by = new Map();
-      for(const r of ROWS){ const k = r.rep_code || UNASSIGNED; (by.get(k) || by.set(k, []).get(k)).push(r); }
+      for(const r of baseRows()){ const k = r.rep_code || UNASSIGNED; (by.get(k) || by.set(k, []).get(k)).push(r); }
       for(const [k, rows] of by){
         const code = k === UNASSIGNED ? null : k, name = rows.find(r => r.rep_name)?.rep_name || code || 'Unassigned';
         zip.file('AR Aging - ' + safeName(code ? name + ' (' + code + ')' : 'Unassigned') + ' - ' + date + '.xlsx', await buildWorkbook(code, name, rows));
@@ -711,17 +729,17 @@ function buildPdf(repCode, repName, rows){
   doc.setFillColor(...PDFC.navy); doc.rect(0, 0, W, 58, 'F');
   doc.setTextColor(255); doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.text('DFL Importers - AR Aging', 36, 27);
   doc.setFont('helvetica', 'normal'); doc.setFontSize(10.5);
-  doc.text((repName || repCode || 'Unassigned') + (repCode ? ' (' + repCode + ')' : '') + '   |   As of ' + SNAP.snapshot_date + '   |   aged from document date   |   all amounts in JMD', 36, 46);
+  doc.text((repName || repCode || 'Unassigned') + (repCode ? ' (' + repCode + ')' : '') + '   |   As of ' + SNAP.snapshot_date + '   |   aged from document date   |   all amounts in JMD   |   unapplied cash ' + (UNAPP ? 'included' : 'excluded'), 36, 46);
   doc.setTextColor(0);
 
   doc.autoTable({
     startY:72, theme:'grid', margin:{ left:36, right:36 },
-    head:[['Current 0-30', '31-60 days', '61-90 days', 'Over 90', 'Credits', 'Net balance']],
-    body:[[b.Current, b['31-60'], b['61-90'], b['90+'], b.Credit, b.total].map(pdfMoney)],
+    head:[['Current 0-30', '31-60 days', '61-90 days', 'Over 90', 'Credits'].concat(UNAPP ? ['Unapplied cash'] : []).concat([UNAPP ? 'Net balance' : 'Open invoices'])],
+    body:[[b.Current, b['31-60'], b['61-90'], b['90+'], b.Credit].concat(UNAPP ? [b.Unapplied] : []).concat([b.total]).map(pdfMoney)],
     styles:{ halign:'center', fontSize:10 }, headStyles:{ fillColor:PDFC.navy },
     didParseCell: d => {
       if(d.section !== 'body') return;
-      const fills = [null, PDFC.y, PDFC.o, PDFC.r, PDFC.cr];
+      const fills = [null, PDFC.y, PDFC.o, PDFC.r, PDFC.cr].concat(UNAPP ? [PDFC.cr] : []);
       if(fills[d.column.index]) d.cell.styles.fillColor = fills[d.column.index];
       d.cell.styles.fontStyle = 'bold';
     }
@@ -795,7 +813,7 @@ function buildPdf(repCode, repName, rows){
   const pages = doc.internal.getNumberOfPages();
   for(let i = 1; i <= pages; i++){
     doc.setPage(i); doc.setFontSize(8); doc.setTextColor(120);
-    doc.text('Yellow over 30 days, orange over 60, red over 90. Credits in green.', 36, H - 16);
+    doc.text('Yellow over 30 days, orange over 60, red over 90. Credits' + (UNAPP ? ' and unapplied payments' : '') + ' in green.', 36, H - 16);
     doc.text('Page ' + i + ' of ' + pages, W - 36, H - 16, { align:'right' });
   }
   return doc;
@@ -807,7 +825,7 @@ async function downloadPdf(){
     const date = SNAP.snapshot_date;
     if(ALL_MODE && !REP_FILTER){
       const zip = new JSZip(); const by = new Map();
-      for(const r of ROWS){ const k = r.rep_code || UNASSIGNED; (by.get(k) || by.set(k, []).get(k)).push(r); }
+      for(const r of baseRows()){ const k = r.rep_code || UNASSIGNED; (by.get(k) || by.set(k, []).get(k)).push(r); }
       for(const [k, rows] of by){
         const code = k === UNASSIGNED ? null : k, name = rows.find(r => r.rep_name)?.rep_name || code || 'Unassigned';
         zip.file('AR Aging - ' + safeName(code ? name + ' (' + code + ')' : 'Unassigned') + ' - ' + date + '.pdf', buildPdf(code, name, rows).output('arraybuffer'));
@@ -826,7 +844,7 @@ async function downloadPdf(){
 // ---------- contact log ----------
 let LOG_CUST = null;
 function openLog(custId){
-  const c = groupCustomers(ROWS).find(x => x.id === custId); if(!c) return;
+  const c = groupCustomers(baseRows()).find(x => x.id === custId); if(!c) return;
   LOG_CUST = c;
   $('logCust').textContent = c.name + ' (' + c.id + ') · balance J$' + fmt(c.total);
   for(const id of ['lgSpoke','lgNote','lgPDate','lgPAmt','lgNext']) $(id).value = '';
@@ -972,6 +990,7 @@ $('modeSeg').addEventListener('click', e => {
   renderAll();
 });
 $('viewSel').addEventListener('change', refilter);
+$('unapSel').addEventListener('change', () => { UNAPP = $('unapSel').value === 'in'; refilter(); });
 $('dlBtn').addEventListener('click', download);
 $('pdfBtn').addEventListener('click', downloadPdf);
 $('lgCancel').addEventListener('click', () => $('logModal').classList.add('hidden'));
