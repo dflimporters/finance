@@ -234,8 +234,12 @@ function buildDetail(tg, pays){
     c.target += bal; c.docs.push(d);
     if(t.doc_type === 'Invoice'){ const k = t.ref_nbr + '|' + t.currency, x = inv.get(k); if(x) x.bal += bal; else inv.set(k, { bal, c, d }); }
   }
+  // A void counts only when the payment it cancels is counted this month too (same rule as the view): voids of payments
+  // that were never counted (their lines disappear from Acumatica once voided) would otherwise show as negative collections.
+  const counted = new Set(pays.filter(p => p.payment_type === 'Payment' || p.payment_type === 'Prepayment').map(p => p.payment_ref + '|' + p.invoice_ref));
   const cash = new Map();
   for(const p of pays){
+    if(p.payment_type === 'Voided Payment' && !counted.has(p.payment_ref + '|' + p.invoice_ref)) continue;
     const amt = Number(p.applied_amount) || 0;
     if(p.payment_type === 'Credit Memo' || p.payment_type === 'Balance WO'){
       const i = inv.get(p.invoice_ref + '|' + p.currency);
