@@ -309,7 +309,7 @@ async function pageAll(build, expected){
 // Switching to the Collections tab and back used to refetch ~17 pages of rows. The rows of a snapshot never change, so the
 // last load is kept for this browser tab, keyed by user (RLS makes the rows per-user) and snapshot ids. Notes and the contact
 // log are small, change often, and are always fetched fresh.
-const CACHE_KEY = 'ar_aging_cache_v2';
+const CACHE_KEY = 'ar_aging_cache_v3';   // v3: customers moved by ar_rep_overrides (2026-11-25)
 function cacheGet(uid, snapId, prevId){
   try { const c = JSON.parse(sessionStorage.getItem(CACHE_KEY) || 'null'); if(c && c.uid === uid && c.snap === snapId && c.prev === prevId) return c; } catch(_) {}
   return null;
