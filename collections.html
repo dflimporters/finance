@@ -275,12 +275,12 @@ function detailHtml(r, count, latest, cols){
   const unit = r.currency === 'USD' ? 'US$' : 'J$';
   const num = (v, neg) => '<td class="' + (neg && v ? 'neg' : '') + '">' + (Math.abs(v) >= 0.5 ? fmt0(v) : '') + '</td>';
   const ccols = 8 + (latest ? 1 : 0);
-  const row = (c, tot) => num(c.target) + '<td class="hide-m">' + (c.adj ? '-' + fmt0(c.adj) : '') + '</td>' + num(c.target - c.adj) +
-    '<td class="hide-m">' + fmt0(c.tgt) + '</td><td class="hide-m">' + (Math.abs(c.other) >= 0.5 ? fmt0(c.other) : '') + '</td>' +
-    (latest ? '<td class="hide-m">' + (c.unap ? fmt0(c.unap) : '') + '</td>' : '') +
-    '<td><b>' + fmt0(c.col) + '</b></td><td class="hide-m ' + (c.gap <= 0 ? 'neg' : '') + '">' + fmt0(c.gap) + '</td>';
-  const head = '<tr><th>Customer</th><th>Target</th><th class="hide-m">Credits / w-o</th><th>Adj. target</th><th class="hide-m">On targeted</th><th class="hide-m">Early / other</th>' +
-    (latest ? '<th class="hide-m">Unapplied' + (count ? '' : ' (memo)') + '</th>' : '') + '<th>Collected</th><th class="hide-m">Gap</th></tr>';
+  const row = (c, tot) => num(c.target) + '<td class="hide-m ctr">' + (c.adj ? '-' + fmt0(c.adj) : '') + '</td>' + num(c.target - c.adj) +
+    '<td class="hide-m ctr">' + fmt0(c.tgt) + '</td><td class="hide-m">' + (Math.abs(c.other) >= 0.5 ? fmt0(c.other) : '') + '</td>' +
+    (latest ? '<td class="hide-m ctr">' + (c.unap ? fmt0(c.unap) : '') + '</td>' : '') +
+    '<td class="ctr"><b>' + fmt0(c.col) + '</b></td><td class="hide-m ' + (c.gap <= 0 ? 'neg' : '') + '">' + fmt0(c.gap) + '</td>';
+  const head = '<tr><th>Customer</th><th>Target</th><th class="hide-m ctr">Credits / w-o</th><th>Adj. target</th><th class="hide-m ctr">On targeted</th><th class="hide-m">Early / other</th>' +
+    (latest ? '<th class="hide-m ctr">Unapplied' + (count ? '' : ' (memo)') + '</th>' : '') + '<th class="ctr">Collected</th><th class="hide-m">Gap</th></tr>';
   const body = list.map(c => {
     const ck = rk + '|' + c.id, open = OPEN_CUST.has(ck);
     return '<tr class="crow' + (open ? ' open' : '') + '" data-ck="' + esc(ck) + '"><td><span class="chev">▶</span><b>' + esc(c.name) + '</b> <small style="color:var(--ink3)">' + esc(c.id) + '</small></td>' + row(c) + '</tr>' +
@@ -347,17 +347,17 @@ function render(){
     return c ? c * SORT.dir : String(a.rep_code).localeCompare(String(b.rep_code));
   });
   const th = (key, label, cls) => '<th class="sortable ' + (cls || '') + '" data-sort="' + key + '">' + label + (SORT.key === key ? (SORT.dir < 0 ? ' ▼' : ' ▲') : '') + '</th>';
-  $('repTable').innerHTML = '<tr>' + th('rep', 'Rep') + '<th>Cur</th>' + th('target', 'Target') + '<th class="hide-m">Credits / write-offs</th>' + th('adj', 'Adj. target') +
-    '<th class="hide-m">On targeted invoices</th><th class="hide-m">Early / other</th>' +
-    (latest ? th('unap', count ? 'Unapplied' : 'Unapplied (memo)', 'hide-m') : '') +
+  $('repTable').innerHTML = '<tr>' + th('rep', 'Rep') + '<th>Cur</th>' + th('target', 'Target') + '<th class="hide-m ctr">Credits / write-offs</th>' + th('adj', 'Adj. target') +
+    '<th class="hide-m ctr">On targeted invoices</th><th class="hide-m">Early / other</th>' +
+    (latest ? th('unap', count ? 'Unapplied' : 'Unapplied (memo)', 'hide-m ctr') : '') +
     th('actual', count ? 'Collected incl. unapplied' : 'Collected', 'ctr') + th('pct', '%') + th('gap', 'Gap', 'hide-m') + '</tr>' +
     (list.map(r => {
       const u = ua(r), a = act(r), rk = repKey(r), open = OPEN.has(rk), cols = latest ? 11 : 10;
       if(open) loadDetail(MONTH);
       return '<tr class="rrow' + (open ? ' open' : '') + '" data-rk="' + esc(rk) + '"><td><span class="chev">▶</span><b>' + esc(r.rep_code || 'Unassigned') + '</b> <small style="color:var(--ink3)">' + esc(r.rep_name && r.rep_name !== r.rep_code ? r.rep_name : '') + '</small></td><td>' + esc(r.currency) + '</td>' +
-        '<td>' + fmt0(r.target) + '</td><td class="hide-m">' + (r.credit_adj + r.wo_adj ? '-' + fmt0(r.credit_adj + r.wo_adj) : '') + '</td><td><b>' + fmt0(r.adjusted_target) + '</b></td>' +
-        '<td class="hide-m">' + fmt0(r.actual_targeted) + '</td><td class="hide-m">' + fmt0(r.actual_other) + '</td>' +
-        (latest ? '<td class="hide-m">' + (u ? fmt0(u) : '') + '</td>' : '') +
+        '<td>' + fmt0(r.target) + '</td><td class="hide-m ctr">' + (r.credit_adj + r.wo_adj ? '-' + fmt0(r.credit_adj + r.wo_adj) : '') + '</td><td><b>' + fmt0(r.adjusted_target) + '</b></td>' +
+        '<td class="hide-m ctr">' + fmt0(r.actual_targeted) + '</td><td class="hide-m">' + fmt0(r.actual_other) + '</td>' +
+        (latest ? '<td class="hide-m ctr">' + (u ? fmt0(u) : '') + '</td>' : '') +
         '<td class="ctr"><b>' + fmt0(a) + '</b></td><td>' + pctHtml(a, r.adjusted_target) + '</td>' +
         '<td class="hide-m ' + (r.adjusted_target - a <= 0 ? 'neg' : '') + '">' + fmt0(r.adjusted_target - a) + '</td></tr>' +
         (open ? '<tr class="det"><td colspan="' + cols + '">' + detailHtml(r, count, latest, cols) + '</td></tr>' : '');
