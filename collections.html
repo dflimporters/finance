@@ -83,6 +83,18 @@ th.sortable{cursor:pointer;user-select:none}th.sortable:hover{color:var(--blue)}
 .pbar i{display:block;height:100%;background:var(--blue)}
 .pbar i.ok{background:var(--green)}
 .pct{font-weight:700}.pct.ok{color:var(--green)}.pct.low{color:#B4540A}
+tr.rrow{cursor:pointer}tr.rrow:hover td{background:#F7F9FD}tr.rrow.open td{background:#EEF3FC}
+.chev{display:inline-block;color:var(--ink3);font-size:11px;width:14px;transition:transform .15s}tr.open .chev{transform:rotate(90deg)}
+tr.det>td{padding:0;background:#FBFCFE;text-align:left;white-space:normal}
+.det .inner{padding:10px 14px 14px 28px}
+.det .inner h4{font:700 11px var(--hf);text-transform:uppercase;letter-spacing:.08em;color:var(--ink2);margin:10px 0 6px}
+.det table{font-size:13px;background:#fff;border:1px solid var(--line)}
+.det th{background:#F5F7FB;font-size:10px}.det td{padding:6px 9px}
+.det tr.crow{cursor:pointer}.det tr.crow:hover td{background:#F7F9FD}.det tr.crow.open td{background:#EEF3FC}
+.det tr.tot td{font-weight:700;background:#F5F7FB}
+.det tr.docs>td{background:#FBFCFE;padding:4px 10px 12px 30px}
+.det .docs table{font-size:12.5px}
+.det .note{color:var(--ink3);font-size:12px;margin:4px 0 0}
 @media (max-width:900px){.colsum{grid-template-columns:1fr}}
 @media (max-width:640px){
   .page{padding:14px 12px 70px}
@@ -148,6 +160,10 @@ async function pageAll(build){
 
 let SUMMARY = [], UNAPPLIED = {}, SNAP = null, MONTH = '', REP = '';
 let UNAP_COUNT = false;   // true: unapplied cash on account counts toward Collected (latest month only)
+const UNAP_BY = new Map();  // "rep|currency" -> Map(customer_id -> { name, amt, rows:[{ ref, date, amt }] }), latest snapshot
+const DETAIL = {};          // month -> { by: Map("rep|currency" -> Map(customer_id -> customer breakdown)) } | { loading } | { error }
+const OPEN = new Set(), OPEN_CUST = new Set();   // expanded rep rows ("rep|currency") and customers ("rep|currency|customer")
+const repKey = r => (r.rep_code || '') + '|' + r.currency;
 let SORT = { key:'target', dir:-1 };
 const REP_OPTS = [];
 
@@ -162,10 +178,135 @@ async function load(){
     SNAP = snaps && snaps[0] || null;
     UNAPPLIED = {};
     if(SNAP){
-      const rows = await pageAll(() => sb.from('ar_aging_rows').select('rep_code,currency,balance_doc').eq('snapshot_id', SNAP.id).eq('doc_type','Payment').order('ref_nbr'));
-      for(const r of rows){ const k = (r.rep_code || UNASSIGNED) + '|' + (r.currency || 'JMD'); UNAPPLIED[k] = (UNAPPLIED[k] || 0) - (Number(r.balance_doc) || 0); }
+      const rows = await pageAll(() => sb.from('ar_aging_rows').select('rep_code,currency,balance_doc,customer_id,customer_name,ref_nbr,doc_date').eq('snapshot_id', SNAP.id).eq('doc_type','Payment').order('ref_nbr'));
+      for(const r of rows){
+        const amt = -(Number(r.balance_doc) || 0), cur = r.currency || 'JMD';
+        const k = (r.rep_code || UNASSIGNED) + '|' + cur; UNAPPLIED[k] = (UNAPPLIED[k] || 0) + amt;
+        const rk = (r.rep_code || '') + '|' + cur;
+        const m = UNAP_BY.get(rk) || UNAP_BY.set(rk, new Map()).get(rk);
+        const c = m.get(r.customer_id) || m.set(r.customer_id, { name:r.customer_name || r.customer_id, amt:0, rows:[] }).get(r.customer_id);
+        c.amt += amt; c.rows.push({ ref:r.ref_nbr, date:r.doc_date, amt });
+      }
     }
   } catch(e){ console.error(e); UNAPPLIED = {}; }
+}
+
+// ---------- per-rep breakdown ----------
+// Rebuilds each rep's row customer by customer from the frozen targets and the month's payment lines, with the same rules
+// as the ar_month_summary view: cash on a targeted invoice counts as "on targeted" up to the invoice's frozen balance and
+// goes to the invoice's rep; the rest (early payments, invoices raised this month, overpayments) is "early / other" and
+// goes to the payment's rep. Credit memos and write-offs applied to targeted invoices lower the target.
+async function loadDetail(month){
+  if(DETAIL[month]) return;
+  DETAIL[month] = { loading:true };
+  try {
+    const end = new Date(month + 'T00:00:00Z'); end.setUTCMonth(end.getUTCMonth() + 1);
+    const [tg, pays] = await Promise.all([
+      pageAll(() => sb.from('ar_month_targets').select('doc_type,ref_nbr,customer_id,customer_name,rep_code,currency,due_date,balance_doc').eq('month', month).order('id')),
+      pageAll(() => sb.from('ar_payments').select('payment_type,payment_ref,payment_date,invoice_ref,applied_amount,currency,customer_id,customer_name,rep_code')
+        .eq('is_missing', false).gte('payment_date', month).lt('payment_date', end.toISOString().slice(0, 10))
+        .in('payment_type', ['Payment', 'Voided Payment', 'Prepayment', 'Credit Memo', 'Balance WO'])
+        .order('adjg_doc_type').order('adjg_ref_nbr').order('line_nbr').order('adjustment_nbr').order('invoice_type').order('invoice_ref'))
+    ]);
+    DETAIL[month] = { by: buildDetail(tg, pays) };
+  } catch(e){ console.error(e); DETAIL[month] = { error:true }; }
+  if(month === MONTH) render();
+}
+
+function buildDetail(tg, pays){
+  const by = new Map();
+  const cust = (rk, id, name) => {
+    const R = by.get(rk) || by.set(rk, new Map()).get(rk);
+    let c = R.get(id);
+    if(!c) R.set(id, c = { id, name: name || id, target:0, adj:0, tgt:0, other:0, docs:[], others:[] });
+    return c;
+  };
+  const inv = new Map();   // "ref|currency" -> { bal, c, d }
+  for(const t of tg){
+    const bal = Number(t.balance_doc) || 0, c = cust((t.rep_code || '') + '|' + t.currency, t.customer_id, t.customer_name);
+    const d = { type:t.doc_type, ref:t.ref_nbr, due:t.due_date, bal, paid:0, adj:0 };
+    c.target += bal; c.docs.push(d);
+    if(t.doc_type === 'Invoice'){ const k = t.ref_nbr + '|' + t.currency, x = inv.get(k); if(x) x.bal += bal; else inv.set(k, { bal, c, d }); }
+  }
+  const cash = new Map();
+  for(const p of pays){
+    const amt = Number(p.applied_amount) || 0;
+    if(p.payment_type === 'Credit Memo' || p.payment_type === 'Balance WO'){
+      const i = inv.get(p.invoice_ref + '|' + p.currency);
+      if(i){ i.c.adj += amt; i.d.adj += amt; }
+      continue;
+    }
+    const k = p.invoice_ref + '|' + (p.rep_code || '') + '|' + p.currency;
+    const g = cash.get(k) || cash.set(k, { amt:0, ref:p.invoice_ref, rk:(p.rep_code || '') + '|' + p.currency, lines:[] }).get(k);
+    g.amt += amt; g.lines.push(p);
+  }
+  for(const g of cash.values()){
+    const i = inv.get(g.ref + '|' + g.lines[0].currency);
+    const t = i ? Math.min(g.amt, i.bal) : 0, o = g.amt - t;
+    if(i){ i.c.tgt += t; i.d.paid += t; }
+    if(Math.abs(o) >= 0.005){
+      const c = cust(g.rk, g.lines[0].customer_id, g.lines[0].customer_name);
+      c.other += o; c.others.push({ ref:g.ref, amt:o, over:!!i, lines:g.lines });
+    }
+  }
+  return by;
+}
+
+const dShort = s => s ? new Date(s + 'T00:00:00').toLocaleDateString('en-GB', { day:'numeric', month:'short' }) : '';
+function detailHtml(r, count, latest, cols){
+  const D = DETAIL[MONTH];
+  if(!D || D.loading) return '<div class="inner empty">Loading the breakdown…</div>';
+  if(D.error) return '<div class="inner empty">Could not load the breakdown. Please refresh, or tell IT Support if it keeps happening.</div>';
+  const rk = repKey(r), R = D.by.get(rk) || new Map(), U = latest ? (UNAP_BY.get(rk) || new Map()) : new Map();
+  const list = [...new Set([...R.keys(), ...U.keys()])].map(id => {
+    const b = R.get(id) || { id, name:U.get(id).name, target:0, adj:0, tgt:0, other:0, docs:[], others:[] }, u = U.get(id);
+    const unap = u ? u.amt : 0, col = b.tgt + b.other + (count ? unap : 0);
+    return Object.assign({}, b, { unap, unapRows: u ? u.rows : [], col, gap: b.target - b.adj - col });
+  }).filter(c => Math.abs(c.target) + Math.abs(c.adj) + Math.abs(c.tgt) + Math.abs(c.other) + Math.abs(c.unap) >= 0.5)
+    .sort((a, b) => b.gap - a.gap || a.name.localeCompare(b.name));
+  const T = { target:0, adj:0, tgt:0, other:0, unap:0, col:0, gap:0 };
+  for(const c of list) for(const k in T) T[k] += c[k];
+  const unit = r.currency === 'USD' ? 'US$' : 'J$';
+  const num = (v, neg) => '<td class="' + (neg && v ? 'neg' : '') + '">' + (Math.abs(v) >= 0.5 ? fmt0(v) : '') + '</td>';
+  const ccols = 8 + (latest ? 1 : 0);
+  const row = (c, tot) => num(c.target) + '<td class="hide-m">' + (c.adj ? '-' + fmt0(c.adj) : '') + '</td>' + num(c.target - c.adj) +
+    '<td class="hide-m">' + fmt0(c.tgt) + '</td><td class="hide-m">' + (Math.abs(c.other) >= 0.5 ? fmt0(c.other) : '') + '</td>' +
+    (latest ? '<td class="hide-m">' + (c.unap ? fmt0(c.unap) : '') + '</td>' : '') +
+    '<td><b>' + fmt0(c.col) + '</b></td><td class="hide-m ' + (c.gap <= 0 ? 'neg' : '') + '">' + fmt0(c.gap) + '</td>';
+  const head = '<tr><th>Customer</th><th>Target</th><th class="hide-m">Credits / w-o</th><th>Adj. target</th><th class="hide-m">On targeted</th><th class="hide-m">Early / other</th>' +
+    (latest ? '<th class="hide-m">Unapplied' + (count ? '' : ' (memo)') + '</th>' : '') + '<th>Collected</th><th class="hide-m">Gap</th></tr>';
+  const body = list.map(c => {
+    const ck = rk + '|' + c.id, open = OPEN_CUST.has(ck);
+    return '<tr class="crow' + (open ? ' open' : '') + '" data-ck="' + esc(ck) + '"><td><span class="chev">▶</span><b>' + esc(c.name) + '</b> <small style="color:var(--ink3)">' + esc(c.id) + '</small></td>' + row(c) + '</tr>' +
+      (open ? '<tr class="docs"><td colspan="' + ccols + '">' + custDocs(c, unit) + '</td></tr>' : '');
+  }).join('');
+  return '<div class="inner"><h4>' + esc(r.rep_code || 'Unassigned') + ' · ' + esc(r.currency) + ' · ' + list.length + ' customer' + (list.length === 1 ? '' : 's') + ' — tap a customer for its documents</h4>' +
+    '<div class="scroll"><table>' + head + (body || '<tr><td colspan="' + ccols + '" class="empty">Nothing for this rep this month.</td></tr>') +
+    '<tr class="tot"><td>Total</td>' + row(T) + '</tr></table></div>' +
+    '<p class="note">Amounts in ' + unit + '. Sorted by largest gap. The total matches the rep\'s row above.</p></div>';
+}
+
+function custDocs(c, unit){
+  let h = '';
+  const docs = c.docs.slice().sort((a, b) => (a.bal < 0) - (b.bal < 0) || String(a.due || '').localeCompare(String(b.due || '')));
+  if(docs.length){
+    h += '<h4>In the target (open at the start of the month, due by month end)</h4><div class="scroll"><table><tr><th>Document</th><th>Due</th><th>Balance at start</th><th>Collected</th><th class="hide-m">Credits / w-o</th><th>Still open</th></tr>' +
+      docs.map(d => { const left = d.bal - d.paid - d.adj;
+        return '<tr><td>' + esc(d.type) + ' ' + esc(d.ref) + '</td><td>' + esc(dShort(d.due)) + '</td><td class="' + (d.bal < 0 ? 'neg' : '') + '">' + fmt0(d.bal) + '</td>' +
+          '<td>' + (d.paid ? fmt0(d.paid) : '') + '</td><td class="hide-m">' + (d.adj ? '-' + fmt0(d.adj) : '') + '</td><td class="' + (left <= 0.5 && d.bal > 0 ? 'neg' : '') + '">' + (d.bal > 0 ? (left <= 0.5 ? 'paid' : fmt0(left)) : '') + '</td></tr>'; }).join('') +
+      '</table></div>';
+  }
+  if(c.others.length){
+    h += '<h4>Early / other cash (not on a targeted invoice)</h4><div class="scroll"><table><tr><th>Applied to</th><th>Payment</th><th>Date</th><th>Counted</th></tr>' +
+      c.others.map(o => '<tr><td>' + esc(o.ref) + (o.over ? ' <small style="color:var(--ink3)">(above its start balance)</small>' : '') + '</td>' +
+        '<td>' + esc([...new Set(o.lines.map(l => (l.payment_type === 'Payment' ? '' : l.payment_type + ' ') + l.payment_ref))].join(', ')) + '</td>' +
+        '<td>' + esc([...new Set(o.lines.map(l => dShort(l.payment_date)))].join(', ')) + '</td><td>' + fmt0(o.amt) + '</td></tr>').join('') + '</table></div>';
+  }
+  if(c.unapRows.length){
+    h += '<h4>Unapplied cash on account (latest AR snapshot)</h4><div class="scroll"><table><tr><th>Payment</th><th>Date</th><th>Unapplied</th></tr>' +
+      c.unapRows.map(u => '<tr><td>' + esc(u.ref) + '</td><td>' + esc(dShort(u.date)) + '</td><td>' + fmt0(u.amt) + '</td></tr>').join('') + '</table></div>';
+  }
+  return h || '<div class="empty">No documents.</div>';
 }
 
 const pctOf = (a, t) => t > 0 ? a / t * 100 : null;
@@ -205,13 +346,15 @@ function render(){
     (latest ? th('unap', count ? 'Unapplied' : 'Unapplied (memo)', 'hide-m') : '') +
     th('actual', count ? 'Collected incl. unapplied' : 'Collected') + th('pct', '%') + th('gap', 'Gap', 'hide-m') + '</tr>' +
     (list.map(r => {
-      const u = ua(r), a = act(r);
-      return '<tr><td><b>' + esc(r.rep_code || 'Unassigned') + '</b> <small style="color:var(--ink3)">' + esc(r.rep_name && r.rep_name !== r.rep_code ? r.rep_name : '') + '</small></td><td>' + esc(r.currency) + '</td>' +
+      const u = ua(r), a = act(r), rk = repKey(r), open = OPEN.has(rk), cols = latest ? 11 : 10;
+      if(open) loadDetail(MONTH);
+      return '<tr class="rrow' + (open ? ' open' : '') + '" data-rk="' + esc(rk) + '"><td><span class="chev">▶</span><b>' + esc(r.rep_code || 'Unassigned') + '</b> <small style="color:var(--ink3)">' + esc(r.rep_name && r.rep_name !== r.rep_code ? r.rep_name : '') + '</small></td><td>' + esc(r.currency) + '</td>' +
         '<td>' + fmt0(r.target) + '</td><td class="hide-m">' + (r.credit_adj + r.wo_adj ? '-' + fmt0(r.credit_adj + r.wo_adj) : '') + '</td><td><b>' + fmt0(r.adjusted_target) + '</b></td>' +
         '<td class="hide-m">' + fmt0(r.actual_targeted) + '</td><td class="hide-m">' + fmt0(r.actual_other) + '</td>' +
         (latest ? '<td class="hide-m">' + (u ? fmt0(u) : '') + '</td>' : '') +
         '<td><b>' + fmt0(a) + '</b></td><td>' + pctHtml(a, r.adjusted_target) + '</td>' +
-        '<td class="hide-m ' + (r.adjusted_target - a <= 0 ? 'neg' : '') + '">' + fmt0(r.adjusted_target - a) + '</td></tr>';
+        '<td class="hide-m ' + (r.adjusted_target - a <= 0 ? 'neg' : '') + '">' + fmt0(r.adjusted_target - a) + '</td></tr>' +
+        (open ? '<tr class="det"><td colspan="' + cols + '">' + detailHtml(r, count, latest, cols) + '</td></tr>' : '');
     }).join('') || '<tr><td colspan="11" class="empty">No targets for this selection.</td></tr>');
 
   const rec = rows.some(r => r.reconstructed);
@@ -268,6 +411,11 @@ async function init(){
 $('monthSel').addEventListener('change', () => { MONTH = $('monthSel').value; render(); });
 $('unapSel').addEventListener('change', () => { UNAP_COUNT = $('unapSel').value === 'count'; render(); });
 $('repTable').addEventListener('click', e => {
+  const ct = e.target.closest('tr[data-ck]');
+  if(ct){ const k = ct.dataset.ck; OPEN_CUST.has(k) ? OPEN_CUST.delete(k) : OPEN_CUST.add(k); render(); return; }
+  if(e.target.closest('tr.det')) return;
+  const rt = e.target.closest('tr[data-rk]');
+  if(rt){ const k = rt.dataset.rk; OPEN.has(k) ? OPEN.delete(k) : OPEN.add(k); render(); return; }
   const h = e.target.closest('th[data-sort]'); if(!h) return;
   const k = h.dataset.sort; SORT.dir = SORT.key === k ? -SORT.dir : (k === 'rep' ? 1 : -1); SORT.key = k; render();
 });
