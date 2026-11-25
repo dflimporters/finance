@@ -62,6 +62,11 @@ body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.5 var(--bf)}
 .bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px}
 .bar select,.bar input{font:14px var(--bf);color:var(--ink);background:#fff;border:1px solid #CBD3E1;border-radius:6px;padding:0 10px;height:40px}
 .bar input{flex:1;min-width:160px}
+.bar.flts{align-items:flex-end}
+.flt{display:flex;flex-direction:column;gap:2px;font:600 10.5px var(--hf);text-transform:uppercase;letter-spacing:.06em;color:var(--ink2)}
+.flt select,.flt input{flex:none;text-transform:none;letter-spacing:0;min-width:150px}
+.flt.grow{flex:1;min-width:200px}.flt.grow input{width:100%}
+th.ctr,td.ctr{text-align:center}
 .panel{background:var(--card);border:1px solid var(--line);border-radius:8px;margin-bottom:16px;overflow:hidden}
 .panel h2{font:700 12px var(--hf);text-transform:uppercase;letter-spacing:.08em;color:var(--ink2);margin:0;padding:12px 14px;border-bottom:1px solid var(--line)}
 .scroll{overflow-x:auto}
@@ -99,6 +104,7 @@ tr.det>td{padding:0;background:#FBFCFE;text-align:left;white-space:normal}
 @media (max-width:640px){
   .page{padding:14px 12px 70px}
   .bar select{width:100%;flex:1 1 100%}
+  .flt{flex:1 1 100%}.bar .flt select,.bar .flt input{flex:none;width:100%;min-width:0}
   td,th{padding:7px 8px}
   .hide-m{display:none}
 }
@@ -115,12 +121,12 @@ tr.det>td{padding:0;background:#FBFCFE;text-align:left;white-space:normal}
   <p class="psub" id="asof">Loading…</p>
 
   <div class="pin">
-    <div class="bar">
-      <select id="monthSel" aria-label="Month"></select>
-      <input id="repSel" list="repList" placeholder="All reps — type or pick" autocomplete="off" aria-label="Sales rep">
+    <div class="bar flts">
+      <label class="flt">Month <select id="monthSel" aria-label="Month"></select></label>
+      <label class="flt grow">Rep <input id="repSel" list="repList" placeholder="All reps — type or pick" autocomplete="off" aria-label="Sales rep"></label>
       <datalist id="repList"></datalist>
-      <select id="unapSel" aria-label="Unapplied cash" title="Unapplied cash is only known for the latest AR snapshot, so this applies to the current month">
-        <option value="memo">Unapplied cash: memo only</option><option value="count">Unapplied cash: count as collected</option></select>
+      <label class="flt" title="Included counts unapplied cash on account as collected. It is only known for the latest AR snapshot, so it applies to the current month.">Unapplied cash
+        <select id="unapSel" aria-label="Unapplied cash"><option value="memo">Excluded</option><option value="count">Included</option></select></label>
     </div>
     <div class="colsum" id="cards"></div>
   </div>
@@ -344,7 +350,7 @@ function render(){
   $('repTable').innerHTML = '<tr>' + th('rep', 'Rep') + '<th>Cur</th>' + th('target', 'Target') + '<th class="hide-m">Credits / write-offs</th>' + th('adj', 'Adj. target') +
     '<th class="hide-m">On targeted invoices</th><th class="hide-m">Early / other</th>' +
     (latest ? th('unap', count ? 'Unapplied' : 'Unapplied (memo)', 'hide-m') : '') +
-    th('actual', count ? 'Collected incl. unapplied' : 'Collected') + th('pct', '%') + th('gap', 'Gap', 'hide-m') + '</tr>' +
+    th('actual', count ? 'Collected incl. unapplied' : 'Collected', 'ctr') + th('pct', '%') + th('gap', 'Gap', 'hide-m') + '</tr>' +
     (list.map(r => {
       const u = ua(r), a = act(r), rk = repKey(r), open = OPEN.has(rk), cols = latest ? 11 : 10;
       if(open) loadDetail(MONTH);
@@ -352,7 +358,7 @@ function render(){
         '<td>' + fmt0(r.target) + '</td><td class="hide-m">' + (r.credit_adj + r.wo_adj ? '-' + fmt0(r.credit_adj + r.wo_adj) : '') + '</td><td><b>' + fmt0(r.adjusted_target) + '</b></td>' +
         '<td class="hide-m">' + fmt0(r.actual_targeted) + '</td><td class="hide-m">' + fmt0(r.actual_other) + '</td>' +
         (latest ? '<td class="hide-m">' + (u ? fmt0(u) : '') + '</td>' : '') +
-        '<td><b>' + fmt0(a) + '</b></td><td>' + pctHtml(a, r.adjusted_target) + '</td>' +
+        '<td class="ctr"><b>' + fmt0(a) + '</b></td><td>' + pctHtml(a, r.adjusted_target) + '</td>' +
         '<td class="hide-m ' + (r.adjusted_target - a <= 0 ? 'neg' : '') + '">' + fmt0(r.adjusted_target - a) + '</td></tr>' +
         (open ? '<tr class="det"><td colspan="' + cols + '">' + detailHtml(r, count, latest, cols) + '</td></tr>' : '');
     }).join('') || '<tr><td colspan="11" class="empty">No targets for this selection.</td></tr>');
@@ -362,7 +368,7 @@ function render(){
     'Credit memos and write-offs after the freeze lower the target. USD customers are in USD; the company total converts at the month\'s frozen rate.' +
     (rec ? ' Some invoices paid early in the month were rebuilt from payment history (due date estimated from customer terms).' : '') +
     (count ? ' Unapplied cash on account (payments received but not yet applied to an invoice, as of the latest AR snapshot) is counted as collected, so the gap is what is still to come in from the reps.'
-      : ' Unapplied cash on account is a memo, not part of the collected figure' + (latest ? '; switch it to "count as collected" to see what is still to come in from the reps.' : ', and is only known for the current month.'));
+      : ' Unapplied cash on account is a memo, not part of the collected figure' + (latest ? '; set Unapplied cash to Included to see what is still to come in from the reps.' : ', and is only known for the current month.'));
   pinVars();
 }
 

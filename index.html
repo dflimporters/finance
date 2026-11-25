@@ -117,9 +117,10 @@ tr.d31 td{background:var(--y)}tr.d61 td{background:var(--o)}tr.d91 td{background
 .seg{display:inline-flex;border:1px solid var(--blue);border-radius:6px;overflow:hidden;flex:0 0 auto}
 .seg button{font:700 12px var(--hf);background:#fff;color:var(--blue);border:0;height:40px;padding:0 16px;cursor:pointer}
 .seg button.on{background:var(--blue);color:#fff}
-.bar.filters{margin-top:-4px}
+.bar.filters{margin-top:-4px;align-items:flex-end}
+.bar.filters .btn.sm{height:36px}
 .flt{display:flex;flex-direction:column;gap:2px;font:600 10.5px var(--hf);text-transform:uppercase;letter-spacing:.06em;color:var(--ink2)}
-.flt select,.flt input{font:14px var(--bf);text-transform:none;letter-spacing:0;color:var(--ink);background:#fff;border:1px solid #CBD3E1;border-radius:6px;padding:0 10px;height:36px;min-width:150px}
+.flt select,.flt input{flex:none;font:14px var(--bf);text-transform:none;letter-spacing:0;color:var(--ink);background:#fff;border:1px solid #CBD3E1;border-radius:6px;padding:0 10px;height:36px;min-width:150px}
 th.sortable{cursor:pointer;user-select:none}th.sortable:hover{color:var(--blue)}
 .ctable td{vertical-align:top}.ctable th:nth-child(2),.ctable td:nth-child(2){text-align:left}.ctable .badges{margin-top:2px}
 tr.exp td{background:#FBFCFE}
@@ -148,7 +149,7 @@ tr.exp td{background:#FBFCFE}
   .strip{grid-template-columns:repeat(2,minmax(0,1fr))}
   .cnum.hide-m{display:none}
   .bar select,.bar input,.bar #repSel,.btn{width:100%;flex:1 1 100%}
-  .flt{flex:1 1 45%}.flt select,.flt input{width:100%;min-width:0}
+  .flt{flex:1 1 45%}.bar .flt select,.bar .flt input{flex:none;width:100%;min-width:0}
   .seg{width:100%}.seg button{flex:1}
   td,th{padding:7px 8px}
   .hide-m{display:none}
@@ -187,8 +188,8 @@ tr.exp td{background:#FBFCFE}
     <label class="flt">Sort <select id="sortSel" aria-label="Sort customers">
       <option value="old">Biggest overdue (61+ days)</option><option value="b90">Most over 90 days</option><option value="total">Largest balance</option>
       <option value="name">Name A–Z</option><option value="last">Longest since contact</option><option value="custom" disabled hidden>Sorted by column</option></select></label>
-    <label class="flt">Unapplied cash <select id="unapSel" aria-label="Unapplied cash">
-      <option value="in">Included (net of payments)</option><option value="out">Excluded (open invoices only)</option></select></label>
+    <label class="flt" title="Included nets unapplied payments off each customer's total. Excluded shows the open invoices as they stand.">Unapplied cash <select id="unapSel" aria-label="Unapplied cash">
+      <option value="in">Included</option><option value="out">Excluded</option></select></label>
     <button class="btn ghost sm" id="clearBtn">Clear filters</button>
   </div>
 
