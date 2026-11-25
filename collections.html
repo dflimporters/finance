@@ -226,7 +226,7 @@ function buildDetail(tg, pays){
   const cust = (rk, id, name) => {
     const R = by.get(rk) || by.set(rk, new Map()).get(rk);
     let c = R.get(id);
-    if(!c) R.set(id, c = { id, name: name || id, target:0, nw:0, adj:0, prior:0, tgt:0, other:0, docs:[], others:[] });
+    if(!c) R.set(id, c = { id, name: name || id, target:0, nw:0, adj:0, prior:0, disc:0, tgt:0, other:0, docs:[], others:[] });
     return c;
   };
   // ar_month_target_docs: late = paid with payments dated before the month but entered after the freeze; small = what is
@@ -239,7 +239,7 @@ function buildDetail(tg, pays){
     const isNew = t.source === 'new';
     const d = { type:t.doc_type, ref:t.ref_nbr, due:t.due_date, bal, late, small, paid:0, adj:0, isNew };
     if(isNew) c.nw += bal; else c.target += bal;
-    c.prior += late + small; c.docs.push(d);
+    c.prior += late + small; c.disc += small; c.docs.push(d);
     if(t.doc_type === 'Invoice'){ const k = t.ref_nbr + '|' + t.currency, x = inv.get(k), e = bal - late - small; if(x) x.bal += e; else inv.set(k, { bal:e, c, d }); }
   }
   // A void counts only when the payment it cancels is counted this month too (same rule as the view): voids of payments
@@ -277,23 +277,25 @@ function detailHtml(r, count, latest, cols){
   if(D.error) return '<div class="inner empty">Could not load the breakdown. Please refresh, or tell IT Support if it keeps happening.</div>';
   const rk = repKey(r), R = D.by.get(rk) || new Map(), U = latest ? (UNAP_BY.get(rk) || new Map()) : new Map();
   const list = [...new Set([...R.keys(), ...U.keys()])].map(id => {
-    const b = R.get(id) || { id, name:U.get(id).name, target:0, nw:0, adj:0, prior:0, tgt:0, other:0, docs:[], others:[] }, u = U.get(id);
-    const unap = u ? u.amt : 0, col = b.tgt + b.other + (count ? unap : 0);
-    return Object.assign({}, b, { unap, unapRows: u ? u.rows : [], col, gap: b.target + b.nw - b.adj - b.prior - col });
-  }).filter(c => Math.abs(c.target) + Math.abs(c.nw) + Math.abs(c.adj) + Math.abs(c.tgt) + Math.abs(c.other) + Math.abs(c.unap) >= 0.5)
+    const b = R.get(id) || { id, name:U.get(id).name, target:0, nw:0, adj:0, prior:0, disc:0, tgt:0, other:0, docs:[], others:[] }, u = U.get(id);
+    const unap = u ? u.amt : 0, col = b.tgt + b.other + (count ? unap : 0), eff = b.target + b.nw - b.adj - b.prior;
+    return Object.assign({}, b, { unap, unapRows: u ? u.rows : [], col, eff, gap: eff - col });
+  }).filter(c => Math.abs(c.eff) + Math.abs(c.nw) + Math.abs(c.adj) + Math.abs(c.disc) + Math.abs(c.tgt) + Math.abs(c.other) + Math.abs(c.unap) >= 0.5)
     .sort((a, b) => b.gap - a.gap || a.name.localeCompare(b.name));
-  const T = { target:0, nw:0, adj:0, prior:0, tgt:0, other:0, unap:0, col:0, gap:0 };
+  const T = { eff:0, nw:0, adj:0, disc:0, tgt:0, other:0, unap:0, col:0, gap:0 };
   for(const c of list) for(const k in T) T[k] += c[k];
   const unit = r.currency === 'USD' ? 'US$' : 'J$';
   const num = (v, neg) => '<td class="' + (neg && v ? 'neg' : '') + '">' + (Math.abs(v) >= 0.5 ? fmt0(v) : '') + '</td>';
-  const ccols = 10 + (latest ? 1 : 0);
-  const row = (c, tot) => num(c.target) + '<td class="hide-m ctr">' + (Math.abs(c.nw) >= 0.5 ? '+' + fmt0(c.nw) : '') + '</td>' +
+  const ccols = 9 + (latest ? 1 : 0);
+  // Target shown = month-start target + new - credits - cash discounts - late-entered earlier payments (the last not shown)
+  const row = (c, tot) => '<td class="hide-m ctr">' + (Math.abs(c.nw) >= 0.5 ? '+' + fmt0(c.nw) : '') + '</td>' +
     '<td class="hide-m ctr">' + (c.adj ? '-' + fmt0(c.adj) : '') + '</td>' +
-    '<td class="hide-m ctr">' + (Math.abs(c.prior) >= 0.5 ? '-' + fmt0(c.prior) : '') + '</td>' + num(c.target + c.nw - c.adj - c.prior) +
+    '<td class="hide-m ctr">' + (Math.abs(c.disc) >= 0.5 ? '-' + fmt0(c.disc) : '') + '</td>' +
+    '<td class="ctr"><b>' + (Math.abs(c.eff) >= 0.5 ? fmt0(c.eff) : '') + '</b></td>' +
     '<td class="hide-m ctr">' + fmt0(c.tgt) + '</td><td class="hide-m">' + (Math.abs(c.other) >= 0.5 ? fmt0(c.other) : '') + '</td>' +
     (latest ? '<td class="hide-m ctr">' + (c.unap ? fmt0(c.unap) : '') + '</td>' : '') +
     '<td class="ctr"><b>' + fmt0(c.col) + '</b></td><td class="hide-m ' + (c.gap <= 0 ? 'neg' : '') + '">' + fmt0(c.gap) + '</td>';
-  const head = '<tr><th>Customer</th><th>Target</th><th class="hide-m ctr" title="' + NEW_TIP + '">New this month</th><th class="hide-m ctr">Credits / w-o</th><th class="hide-m ctr" title="' + PRIOR_TIP + '">Paid earlier / ≤2.5%</th><th>Adj. target</th><th class="hide-m ctr">On targeted</th><th class="hide-m">Early / other</th>' +
+  const head = '<tr><th>Customer</th><th class="hide-m ctr" title="' + NEW_TIP + '">New this month</th><th class="hide-m ctr">Credits / w-o</th><th class="hide-m ctr" title="' + DISC_TIP + '">Cash discounts</th><th class="ctr">Target</th><th class="hide-m ctr">On targeted</th><th class="hide-m">Early / other</th>' +
     (latest ? '<th class="hide-m ctr">Unapplied' + (count ? '' : ' (memo)') + '</th>' : '') + '<th class="ctr">Collected</th><th class="hide-m">Gap</th></tr>';
   const body = list.map(c => {
     const ck = rk + '|' + c.id, open = OPEN_CUST.has(ck);
@@ -308,13 +310,16 @@ function detailHtml(r, count, latest, cols){
 
 function custDocs(c, unit){
   let h = '';
-  const docs = c.docs.slice().sort((a, b) => (a.bal < 0) - (b.bal < 0) || String(a.due || '').localeCompare(String(b.due || '')));
+  // Invoices whose whole start balance was paid with payments dated before the month (entered late) are not in the
+  // target at all, so they are not listed; for the rest, Target = start balance less any such earlier payment.
+  const docs = c.docs.filter(d => d.bal <= 0 || d.bal - d.late >= 0.5)
+    .sort((a, b) => (a.bal < 0) - (b.bal < 0) || String(a.due || '').localeCompare(String(b.due || '')));
   if(docs.length){
-    h += '<h4>In the target (open at the start of the month or raised since, due by month end)</h4><div class="scroll"><table><tr><th>Document</th><th>Due</th><th>Balance at start / new</th><th class="hide-m ctr" title="' + PRIOR_TIP + '">Paid earlier / ≤2.5%</th><th class="ctr">Collected</th><th class="hide-m ctr">Credits / w-o</th><th>Still open</th></tr>' +
-      docs.map(d => { const left = d.bal - d.late - d.small - d.paid - d.adj;
-        const status = d.bal <= 0 ? '' : d.small > 0 && left <= 0.5 ? '≤2.5% left out' : left <= 0.5 ? (d.late >= d.bal - 0.5 ? 'paid earlier' : 'paid') : fmt0(left);
-        return '<tr><td>' + esc(d.type) + ' ' + esc(d.ref) + (d.isNew ? ' <span class="newtag" title="' + NEW_TIP + '">new</span>' : '') + '</td><td>' + esc(dShort(d.due)) + '</td><td class="' + (d.bal < 0 ? 'neg' : '') + '">' + fmt0(d.bal) + '</td>' +
-          '<td class="hide-m ctr">' + (d.late + d.small >= 0.5 ? '-' + fmt0(d.late + d.small) : '') + '</td>' +
+    h += '<h4>In the target (open at the start of the month or raised since, due by month end)</h4><div class="scroll"><table><tr><th>Document</th><th>Due</th><th>Target</th><th class="hide-m ctr" title="' + DISC_TIP + '">Cash discount</th><th class="ctr">Collected</th><th class="hide-m ctr">Credits / w-o</th><th>Still open</th></tr>' +
+      docs.map(d => { const tgtAmt = d.bal - d.late, left = tgtAmt - d.small - d.paid - d.adj;
+        const status = d.bal <= 0 ? '' : d.small > 0 && left <= 0.5 ? 'cash discount' : left <= 0.5 ? 'paid' : fmt0(left);
+        return '<tr><td>' + esc(d.type) + ' ' + esc(d.ref) + (d.isNew ? ' <span class="newtag" title="' + NEW_TIP + '">new</span>' : '') + '</td><td>' + esc(dShort(d.due)) + '</td><td class="' + (d.bal < 0 ? 'neg' : '') + '">' + fmt0(tgtAmt) + '</td>' +
+          '<td class="hide-m ctr">' + (d.small >= 0.5 ? '-' + fmt0(d.small) : '') + '</td>' +
           '<td class="ctr">' + (d.paid ? fmt0(d.paid) : '') + '</td><td class="hide-m ctr">' + (d.adj ? '-' + fmt0(d.adj) : '') + '</td><td class="' + (left <= 0.5 && d.bal > 0 ? 'neg' : '') + '">' + status + '</td></tr>'; }).join('') +
       '</table></div>';
   }
@@ -332,7 +337,8 @@ function custDocs(c, unit){
 }
 
 const NEW_TIP = 'Invoices raised this month that fall due by month end, added to the target as they are raised (at their full amount).';
-const PRIOR_TIP ='Comes off the target: payments dated before the month but entered after the target was set (they count in the earlier month), and balances of 2.5% or less of the invoice (likely a cash discount).';
+const DISC_TIP = 'Balances of 2.5% or less of the invoice, left out of the target as likely cash discounts.';
+const TARGET_TIP = 'open balance on the 1st of invoices due by month end (overdue carry-over included, net of open credits), plus invoices raised this month that fall due by month end, less credit memos and write-offs, cash discounts (balances of 2.5% or less), and payments dated before the month that were entered after the 1st (they count in the earlier month).';
 const pctOf = (a, t) => t > 0 ? a / t * 100 : null;
 const pctHtml = (a, t) => { const p = pctOf(a, t); return p == null ? '—' : '<span class="pct ' + (p >= 100 ? 'ok' : p < 50 ? 'low' : '') + '">' + p.toFixed(1) + '%</span>'; };
 
@@ -358,34 +364,36 @@ function render(){
   const jmd = sum('JMD'), usd = sum('USD'), all = sum(null);
   $('cards').innerHTML = card('JMD customers', jmd, 'J$') + card('USD customers', usd, 'US$') + card('Company total (JMD equivalent)', all, 'J$');
 
-  const acc = { rep: r => (r.rep_code || '~').toLowerCase(), target: r => r.target * r.rate, adj: r => r.adjusted_target * r.rate, prior: r => (r.late_adj + r.small_adj) * r.rate, nw: r => r.new_target * r.rate, actual: r => act(r) * r.rate,
+  // "Target" on screen is the adjusted target (month-start target + new this month - credits - cash discounts - payments dated
+  // before the month but entered late). The month-start figure and the late payments are still calculated, just not shown.
+  const acc = { rep: r => (r.rep_code || '~').toLowerCase(), target: r => r.adjusted_target * r.rate, disc: r => r.small_adj * r.rate, nw: r => r.new_target * r.rate, actual: r => act(r) * r.rate,
     pct: r => r.adjusted_target > 0 ? act(r) / r.adjusted_target : -1, gap: r => (r.adjusted_target - act(r)) * r.rate, unap: r => ua(r) * r.rate };
   const list = rows.filter(r => r.target || r.actual_total || ua(r)).sort((a, b) => {
     const f = acc[SORT.key] || acc.target, x = f(a), y = f(b), c = typeof x === 'string' ? x.localeCompare(y) : x - y;
     return c ? c * SORT.dir : String(a.rep_code).localeCompare(String(b.rep_code));
   });
   const th = (key, label, cls) => '<th class="sortable ' + (cls || '') + '" data-sort="' + key + '">' + label + (SORT.key === key ? (SORT.dir < 0 ? ' ▼' : ' ▲') : '') + '</th>';
-  $('repTable').innerHTML = '<tr>' + th('rep', 'Rep') + '<th>Cur</th>' + th('target', 'Target') + th('nw', 'New this month', 'hide-m ctr" title="' + NEW_TIP) + '<th class="hide-m ctr">Credits / write-offs</th>' + th('prior', 'Paid earlier / ≤2.5%', 'hide-m ctr" title="' + PRIOR_TIP) + th('adj', 'Adj. target') +
+  $('repTable').innerHTML = '<tr>' + th('rep', 'Rep') + '<th>Cur</th>' + th('nw', 'New this month', 'hide-m ctr" title="' + NEW_TIP) + '<th class="hide-m ctr">Credits / write-offs</th>' + th('disc', 'Cash discounts', 'hide-m ctr" title="' + DISC_TIP) + th('target', 'Target', 'ctr" title="' + TARGET_TIP) +
     '<th class="hide-m ctr">On targeted invoices</th><th class="hide-m">Early / other</th>' +
     (latest ? th('unap', count ? 'Unapplied' : 'Unapplied (memo)', 'hide-m ctr') : '') +
     th('actual', count ? 'Collected incl. unapplied' : 'Collected', 'ctr') + th('pct', '%') + th('gap', 'Gap', 'hide-m') + '</tr>' +
     (list.map(r => {
-      const u = ua(r), a = act(r), rk = repKey(r), open = OPEN.has(rk), cols = latest ? 13 : 12, pr = r.late_adj + r.small_adj;
+      const u = ua(r), a = act(r), rk = repKey(r), open = OPEN.has(rk), cols = latest ? 12 : 11;
       if(open) loadDetail(MONTH);
       return '<tr class="rrow' + (open ? ' open' : '') + '" data-rk="' + esc(rk) + '"><td><span class="chev">▶</span><b>' + esc(r.rep_code || 'Unassigned') + '</b> <small style="color:var(--ink3)">' + esc(r.rep_name && r.rep_name !== r.rep_code ? r.rep_name : '') + '</small></td><td>' + esc(r.currency) + '</td>' +
-        '<td>' + fmt0(r.target) + '</td><td class="hide-m ctr">' + (r.new_target >= 0.5 ? '+' + fmt0(r.new_target) : '') + '</td>' +
+        '<td class="hide-m ctr">' + (r.new_target >= 0.5 ? '+' + fmt0(r.new_target) : '') + '</td>' +
         '<td class="hide-m ctr">' + (r.credit_adj + r.wo_adj ? '-' + fmt0(r.credit_adj + r.wo_adj) : '') + '</td>' +
-        '<td class="hide-m ctr">' + (pr >= 0.5 ? '-' + fmt0(pr) : '') + '</td><td><b>' + fmt0(r.adjusted_target) + '</b></td>' +
+        '<td class="hide-m ctr">' + (r.small_adj >= 0.5 ? '-' + fmt0(r.small_adj) : '') + '</td><td class="ctr"><b>' + fmt0(r.adjusted_target) + '</b></td>' +
         '<td class="hide-m ctr">' + fmt0(r.actual_targeted) + '</td><td class="hide-m">' + fmt0(r.actual_other) + '</td>' +
         (latest ? '<td class="hide-m ctr">' + (u ? fmt0(u) : '') + '</td>' : '') +
         '<td class="ctr"><b>' + fmt0(a) + '</b></td><td>' + pctHtml(a, r.adjusted_target) + '</td>' +
         '<td class="hide-m ' + (r.adjusted_target - a <= 0 ? 'neg' : '') + '">' + fmt0(r.adjusted_target - a) + '</td></tr>' +
         (open ? '<tr class="det"><td colspan="' + cols + '">' + detailHtml(r, count, latest, cols) + '</td></tr>' : '');
-    }).join('') || '<tr><td colspan="13" class="empty">No targets for this selection.</td></tr>');
+    }).join('') || '<tr><td colspan="12" class="empty">No targets for this selection.</td></tr>');
 
   const rec = rows.some(r => r.reconstructed);
-  $('foot').textContent = 'Target = open balance of invoices due by month end (overdue carry-over included) net of open credits, frozen at the start of the month. New this month = invoices raised during the month that fall due by month end, added as they are raised.Collected = all cash received in the month, early payments included, voids deducted. ' +
-    'Credit memos and write-offs after the freeze lower the target, and so do payments dated before the month but entered after the target was set (they count in the earlier month) and balances of 2.5% or less of the invoice (likely a cash discount). USD customers are in USD; the company total converts at the month\'s frozen rate.' +
+  $('foot').textContent = 'Target = ' + TARGET_TIP + ' Collected = all cash received in the month, early payments included, voids deducted. ' +
+    'USD customers are in USD; the company total converts at the month\'s frozen rate.' +
     (rec ? ' Some invoices paid early in the month were rebuilt from payment history (due date estimated from customer terms).' : '') +
     (count ? ' Unapplied cash on account (payments received but not yet applied to an invoice, as of the latest AR snapshot) is counted as collected, so the gap is what is still to come in from the reps.'
       : ' Unapplied cash on account is a memo, not part of the collected figure' + (latest ? '; set Unapplied cash to Included to see what is still to come in from the reps.' : ', and is only known for the current month.'));
