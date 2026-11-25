@@ -288,14 +288,14 @@ function detailHtml(r, count, latest, cols){
   const num = (v, neg) => '<td class="' + (neg && v ? 'neg' : '') + '">' + (Math.abs(v) >= 0.5 ? fmt0(v) : '') + '</td>';
   const ccols = 9 + (latest ? 1 : 0);
   // Target shown = month-start target + new - credits - cash discounts - late-entered earlier payments (the last not shown)
-  const row = (c, tot) => '<td class="hide-m ctr">' + (Math.abs(c.nw) >= 0.5 ? '+' + fmt0(c.nw) : '') + '</td>' +
+  const row = (c, tot) => '<td class="ctr"><b>' + (Math.abs(c.eff) >= 0.5 ? fmt0(c.eff) : '') + '</b></td>' +
+    '<td class="hide-m ctr">' + (Math.abs(c.nw) >= 0.5 ? '+' + fmt0(c.nw) : '') + '</td>' +
     '<td class="hide-m ctr">' + (c.adj ? '-' + fmt0(c.adj) : '') + '</td>' +
     '<td class="hide-m ctr">' + (Math.abs(c.disc) >= 0.5 ? '-' + fmt0(c.disc) : '') + '</td>' +
-    '<td class="ctr"><b>' + (Math.abs(c.eff) >= 0.5 ? fmt0(c.eff) : '') + '</b></td>' +
     '<td class="hide-m ctr">' + fmt0(c.tgt) + '</td><td class="hide-m">' + (Math.abs(c.other) >= 0.5 ? fmt0(c.other) : '') + '</td>' +
     (latest ? '<td class="hide-m ctr">' + (c.unap ? fmt0(c.unap) : '') + '</td>' : '') +
     '<td class="ctr"><b>' + fmt0(c.col) + '</b></td><td class="hide-m ' + (c.gap <= 0 ? 'neg' : '') + '">' + fmt0(c.gap) + '</td>';
-  const head = '<tr><th>Customer</th><th class="hide-m ctr" title="' + NEW_TIP + '">New this month</th><th class="hide-m ctr">Credits / w-o</th><th class="hide-m ctr" title="' + DISC_TIP + '">Cash discounts</th><th class="ctr">Target</th><th class="hide-m ctr">On targeted</th><th class="hide-m">Early / other</th>' +
+  const head = '<tr><th>Customer</th><th class="ctr">Target</th><th class="hide-m ctr" title="' + NEW_TIP + '">New this month</th><th class="hide-m ctr">Credits / w-o</th><th class="hide-m ctr" title="' + DISC_TIP + '">Cash discounts</th><th class="hide-m ctr">On targeted</th><th class="hide-m">Early / other</th>' +
     (latest ? '<th class="hide-m ctr">Unapplied' + (count ? '' : ' (memo)') + '</th>' : '') + '<th class="ctr">Collected</th><th class="hide-m">Gap</th></tr>';
   const body = list.map(c => {
     const ck = rk + '|' + c.id, open = OPEN_CUST.has(ck);
@@ -373,7 +373,7 @@ function render(){
     return c ? c * SORT.dir : String(a.rep_code).localeCompare(String(b.rep_code));
   });
   const th = (key, label, cls) => '<th class="sortable ' + (cls || '') + '" data-sort="' + key + '">' + label + (SORT.key === key ? (SORT.dir < 0 ? ' ▼' : ' ▲') : '') + '</th>';
-  $('repTable').innerHTML = '<tr>' + th('rep', 'Rep') + '<th>Cur</th>' + th('nw', 'New this month', 'hide-m ctr" title="' + NEW_TIP) + '<th class="hide-m ctr">Credits / write-offs</th>' + th('disc', 'Cash discounts', 'hide-m ctr" title="' + DISC_TIP) + th('target', 'Target', 'ctr" title="' + TARGET_TIP) +
+  $('repTable').innerHTML = '<tr>' + th('rep', 'Rep') + '<th>Cur</th>' + th('target', 'Target', 'ctr" title="' + TARGET_TIP) + th('nw', 'New this month', 'hide-m ctr" title="' + NEW_TIP) + '<th class="hide-m ctr">Credits / write-offs</th>' + th('disc', 'Cash discounts', 'hide-m ctr" title="' + DISC_TIP) +
     '<th class="hide-m ctr">On targeted invoices</th><th class="hide-m">Early / other</th>' +
     (latest ? th('unap', count ? 'Unapplied' : 'Unapplied (memo)', 'hide-m ctr') : '') +
     th('actual', count ? 'Collected incl. unapplied' : 'Collected', 'ctr') + th('pct', '%') + th('gap', 'Gap', 'hide-m') + '</tr>' +
@@ -381,9 +381,10 @@ function render(){
       const u = ua(r), a = act(r), rk = repKey(r), open = OPEN.has(rk), cols = latest ? 12 : 11;
       if(open) loadDetail(MONTH);
       return '<tr class="rrow' + (open ? ' open' : '') + '" data-rk="' + esc(rk) + '"><td><span class="chev">▶</span><b>' + esc(r.rep_code || 'Unassigned') + '</b> <small style="color:var(--ink3)">' + esc(r.rep_name && r.rep_name !== r.rep_code ? r.rep_name : '') + '</small></td><td>' + esc(r.currency) + '</td>' +
+        '<td class="ctr"><b>' + fmt0(r.adjusted_target) + '</b></td>' +
         '<td class="hide-m ctr">' + (r.new_target >= 0.5 ? '+' + fmt0(r.new_target) : '') + '</td>' +
         '<td class="hide-m ctr">' + (r.credit_adj + r.wo_adj ? '-' + fmt0(r.credit_adj + r.wo_adj) : '') + '</td>' +
-        '<td class="hide-m ctr">' + (r.small_adj >= 0.5 ? '-' + fmt0(r.small_adj) : '') + '</td><td class="ctr"><b>' + fmt0(r.adjusted_target) + '</b></td>' +
+        '<td class="hide-m ctr">' + (r.small_adj >= 0.5 ? '-' + fmt0(r.small_adj) : '') + '</td>' +
         '<td class="hide-m ctr">' + fmt0(r.actual_targeted) + '</td><td class="hide-m">' + fmt0(r.actual_other) + '</td>' +
         (latest ? '<td class="hide-m ctr">' + (u ? fmt0(u) : '') + '</td>' : '') +
         '<td class="ctr"><b>' + fmt0(a) + '</b></td><td>' + pctHtml(a, r.adjusted_target) + '</td>' +
