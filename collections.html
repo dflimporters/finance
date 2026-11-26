@@ -153,14 +153,16 @@ const fmt0 = n => (n < 0 ? '-' : '') + Math.abs(Math.round(n)).toLocaleString('e
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const monthLabel = m => new Date(m + 'T00:00:00').toLocaleDateString('en-GB', { month:'long', year:'numeric' });
 
-async function pageAll(build){
-  const out = []; let from = 0;
+// parallel > 1 fetches that many pages at once (used for the per-rep breakdown, whose view takes ~1s per page)
+async function pageAll(build, parallel){
+  const out = [], W = parallel || 1; let from = 0;
   for(;;){
-    const { data, error } = await build().range(from, from + 999);
-    if(error) throw error;
-    out.push(...data);
-    if(data.length < 1000) break;
-    from += 1000;
+    const parts = await Promise.all(Array.from({ length:W }, (_, i) => build().range(from + i * 1000, from + i * 1000 + 999)
+      .then(({ data, error }) => { if(error) throw error; return data; })));
+    let done = false;
+    for(const p of parts){ out.push(...p); if(p.length < 1000){ done = true; break; } }
+    if(done) break;
+    from += W * 1000;
   }
   return out;
 }
@@ -210,7 +212,7 @@ async function loadDetail(month){
   try {
     const end = new Date(month + 'T00:00:00Z'); end.setUTCMonth(end.getUTCMonth() + 1);
     const [tg, pays] = await Promise.all([
-      pageAll(() => sb.from('ar_month_target_docs').select('doc_type,ref_nbr,customer_id,customer_name,rep_code,currency,due_date,source,bal,late_adj,small_adj').eq('month', month).order('doc_type').order('ref_nbr')),
+      pageAll(() => sb.from('ar_month_target_docs').select('doc_type,ref_nbr,customer_id,customer_name,rep_code,currency,due_date,source,bal,late_adj,small_adj').eq('month', month).order('doc_type').order('ref_nbr'), 4),
       pageAll(() => sb.from('ar_payments').select('payment_type,payment_ref,payment_date,invoice_ref,applied_amount,currency,customer_id,customer_name,rep_code')
         .eq('is_missing', false).gte('payment_date', month).lt('payment_date', end.toISOString().slice(0, 10))
         .in('payment_type', ['Payment', 'Voided Payment', 'Prepayment', 'Credit Memo', 'Balance WO'])
